@@ -1,5 +1,8 @@
 import type { Argv } from "yargs"
 import * as fs from "node:fs/promises"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 import { cmd } from "./cmd"
 import { bootstrap } from "../bootstrap"
@@ -72,6 +75,12 @@ export const ReplayShowCommand = cmd({
       `events=${trailer.events} duration=${(trailer.duration_ms / 1000).toFixed(1)}s sha256=${trailer.sha256_body.slice(0, 12)}…`,
     )
     UI.println(verify.ok ? "integrity: ok" : `integrity: MISMATCH (expected ${verify.expected.slice(0, 12)}…, got ${verify.actual.slice(0, 12)}…)`)
+    if (trailer.signed && trailer.signature) {
+      const result = verifySignature(trailer.sha256_body, trailer.signature)
+      UI.println(`signature: ${trailer.signature.scheme} ${result.ok ? "verified" : `UNVERIFIED — ${result.detail}`}`)
+    } else {
+      UI.println("signature: none")
+    }
     UI.empty()
     for (const e of events) {
       const ts = e.ts.replace("T", " ").replace(/\..*Z$/, "")
@@ -105,12 +114,59 @@ export const ReplayVerifyCommand = cmd({
     }
     UI.println(`sha256: ok (${verify.actual.slice(0, 16)}…)`)
     if (trailer.signed && trailer.signature) {
-      UI.println(`signature: ${trailer.signature.scheme} (verification not yet implemented in CLI)`)
+      const result = verifySignature(trailer.sha256_body, trailer.signature)
+      if (result.ok) {
+        UI.println(`signature: ${trailer.signature.scheme} verified`)
+      } else {
+        UI.error(`signature: ${trailer.signature.scheme} UNVERIFIED — ${result.detail}`)
+        process.exitCode = 1
+      }
     } else {
       UI.println("signature: none")
     }
   },
 })
+
+function verifySignature(
+  payload: string,
+  signature: { scheme: string; value: string; public_key_id?: string },
+): { ok: boolean; detail: string } {
+  const dir = mkdtempSync(join(tmpdir(), "axiomsec-verify-"))
+  try {
+    const payloadPath = join(dir, "payload.txt")
+    writeFileSync(payloadPath, payload)
+    if (signature.scheme === "minisign") {
+      const publicKey = process.env.AXIOMSEC_MINISIGN_PUBKEY
+      if (!publicKey) return { ok: false, detail: "set AXIOMSEC_MINISIGN_PUBKEY to the public key file" }
+      if (!which("minisign")) return { ok: false, detail: "minisign is not on PATH" }
+      const sigPath = join(dir, "signature.minisig")
+      writeFileSync(sigPath, Buffer.from(signature.value, "base64"))
+      const result = spawnSync("minisign", ["-Vm", payloadPath, "-x", sigPath, "-p", publicKey], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      })
+      if (result.status === 0) return { ok: true, detail: "minisign signature verified" }
+      return { ok: false, detail: (result.stderr || result.stdout || "minisign verification failed").trim() }
+    }
+    if (signature.scheme === "cosign") {
+      const publicKey = process.env.COSIGN_PUBKEY
+      if (!publicKey) return { ok: false, detail: "set COSIGN_PUBKEY to the public key file" }
+      if (!which("cosign")) return { ok: false, detail: "cosign is not on PATH" }
+      const sigPath = join(dir, "signature.txt")
+      writeFileSync(sigPath, signature.value)
+      const result = spawnSync(
+        "cosign",
+        ["verify-blob", "--key", publicKey, "--signature", sigPath, "--insecure-ignore-tlog=true", payloadPath],
+        { encoding: "utf-8", timeout: 10_000 },
+      )
+      if (result.status === 0) return { ok: true, detail: "cosign signature verified" }
+      return { ok: false, detail: (result.stderr || result.stdout || "cosign verification failed").trim() }
+    }
+    return { ok: false, detail: `unknown signature scheme ${signature.scheme}` }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
 
 function truncate(s: string, max: number) {
   if (s.length <= max) return s
@@ -119,21 +175,28 @@ function truncate(s: string, max: number) {
 
 function sign(payload: string): { scheme: string; value: string; public_key_id?: string } | null {
   if (which("minisign")) {
-    const tmpIn = `/tmp/axiomsec-sign-${Date.now()}.txt`
+    const tmpIn = join(tmpdir(), `axiomsec-sign-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`)
     const tmpSig = `${tmpIn}.minisig`
     try {
-      require("node:fs").writeFileSync(tmpIn, payload)
-      const r = spawnSync("minisign", ["-Sm", tmpIn], { encoding: "utf-8" })
+      writeFileSync(tmpIn, payload)
+      const r = spawnSync("minisign", ["-Sm", tmpIn], { encoding: "utf-8", timeout: 10_000 })
       if (r.status === 0) {
-        const sigText = require("node:fs").readFileSync(tmpSig, "utf-8")
+        const sigText = readFileSync(tmpSig, "utf-8")
         return { scheme: "minisign", value: Buffer.from(sigText).toString("base64") }
       }
     } catch {
       /* fallthrough */
+    } finally {
+      rmSync(tmpIn, { force: true })
+      rmSync(tmpSig, { force: true })
     }
   }
   if (which("cosign")) {
-    const r = spawnSync("cosign", ["sign-blob", "--yes", "-"], { input: payload, encoding: "utf-8" })
+    const r = spawnSync("cosign", ["sign-blob", "--yes", "-"], {
+      input: payload,
+      encoding: "utf-8",
+      timeout: 10_000,
+    })
     if (r.status === 0 && r.stdout) {
       return { scheme: "cosign", value: r.stdout.trim() }
     }

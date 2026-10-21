@@ -184,7 +184,7 @@ export namespace McpOAuthCallback {
 
       server!.once("listening", onListening)
       server!.once("error", onError)
-      server!.listen(currentPort)
+      server!.listen(currentPort, "127.0.0.1")
     })
   }
 

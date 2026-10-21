@@ -44,8 +44,6 @@ export const AuthMiddleware: MiddlewareHandler = (c, next) => {
   if (!password) return next()
   const username = Flag.AXIOMSEC_SERVER_USERNAME ?? "axiomsec"
 
-  if (c.req.query("auth_token")) c.req.raw.headers.set("authorization", `Basic ${c.req.query("auth_token")}`)
-
   return basicAuth({ username, password })(c, next)
 }
 
