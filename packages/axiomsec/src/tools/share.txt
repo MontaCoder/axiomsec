@@ -2,9 +2,11 @@ Bundle the active operation into a shareable, tamper-evident tarball.
 
 Args:
   - action: "build" (default) or "status"
-  - redact: boolean (default true) — apply the replay redactor to bundled text
-    (markdown, txt, json) before packaging, scrubbing JWTs, auth headers, and
-    common secret field values.
+  - redact: boolean (default true) — scrub secrets from bundled text and
+    structured data before packaging: JWTs, Authorization/Cookie headers,
+    HAR-style header pairs, and common secret keys in JSON/JSONL/NDJSON/YAML.
+    Binary artifacts, extensionless files, and bare opaque values with no
+    recognizable key/header pattern are not content-scanned.
   - sign: boolean (default false) — attempt to sign the tarball's sha256 with
     minisign or cosign if a signing key is configured (via AXIOMSEC_MINISIGN_KEY
     + AXIOMSEC_MINISIGN_PASSWORD or COSIGN_KEY env vars). If no key is found,

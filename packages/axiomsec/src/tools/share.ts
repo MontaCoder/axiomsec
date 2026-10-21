@@ -12,7 +12,7 @@ import { Cyber } from "@/core/cyber"
 import { Deliverable } from "@/core/deliverable"
 import * as OperationSnapshot from "@/core/operation/snapshot"
 import { Instance } from "@/project/instance"
-import { redactString } from "@/core/replay/redact"
+import { redactString, redactValue } from "@/core/replay/redact"
 import { which } from "@/support/which"
 
 const parameters = z.object({
@@ -38,7 +38,65 @@ type Metadata = {
   side_effects?: string[]
 }
 
-const REDACT_EXTS = new Set([".md", ".txt", ".json", ".log", ".yml", ".yaml", ".csv"])
+const JSON_EXTS = new Set([".json", ".har"])
+const JSONL_EXTS = new Set([".jsonl", ".ndjson"])
+const TEXT_EXTS = new Set([
+  ".md",
+  ".txt",
+  ".log",
+  ".yml",
+  ".yaml",
+  ".csv",
+  ".tsv",
+  ".html",
+  ".htm",
+  ".xml",
+  ".json",
+  ".har",
+  ".jsonl",
+  ".ndjson",
+])
+
+async function redactJson(p: string): Promise<boolean> {
+  const before = await readFile(p, "utf8").catch(() => null)
+  if (before === null) return false
+  try {
+    const after = JSON.stringify(redactValue(JSON.parse(before), "on"), null, 2)
+    if (after !== before) await writeFile(p, after, "utf8")
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function redactJsonLines(p: string): Promise<boolean> {
+  const before = await readFile(p, "utf8").catch(() => null)
+  if (before === null) return false
+  const after = before
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!line.trim()) return line
+      try {
+        return JSON.stringify(redactValue(JSON.parse(line), "on"))
+      } catch {
+        return redactString(line, "on")
+      }
+    })
+    .join("\n")
+  if (after !== before) await writeFile(p, after, "utf8")
+  return true
+}
+
+async function redactFile(p: string): Promise<void> {
+  const ext = path.extname(p).toLowerCase()
+  if (JSON_EXTS.has(ext) && (await redactJson(p))) return
+  if (JSONL_EXTS.has(ext) && (await redactJsonLines(p))) return
+  if (!TEXT_EXTS.has(ext)) return
+  const before = await readFile(p, "utf8").catch(() => null)
+  if (before === null) return
+  const after = redactString(before, "on")
+  if (after !== before) await writeFile(p, after, "utf8")
+}
 
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = []
@@ -49,15 +107,6 @@ async function walk(dir: string): Promise<string[]> {
     else if (entry.isFile()) out.push(full)
   }
   return out
-}
-
-async function redactFile(p: string): Promise<void> {
-  const ext = path.extname(p).toLowerCase()
-  if (!REDACT_EXTS.has(ext)) return
-  const before = await readFile(p, "utf8").catch(() => null)
-  if (before === null) return
-  const after = redactString(before, "on")
-  if (after !== before) await writeFile(p, after, "utf8")
 }
 
 async function copyDir(src: string, dst: string): Promise<void> {
@@ -84,7 +133,7 @@ function trySign(payload: string): { scheme: string; value: string } | { scheme:
     const r = spawnSync(
       "minisign",
       ["-S", "-s", minisignKey, "-x", "-", "-m", "-"],
-      { input: payload + "\n" + minisignPass + "\n", encoding: "utf-8" },
+      { input: payload + "\n" + minisignPass + "\n", encoding: "utf-8", timeout: 10_000 },
     )
     if (r.status === 0 && r.stdout) return { scheme: "minisign", value: r.stdout.trim() }
   }
@@ -93,6 +142,7 @@ function trySign(payload: string): { scheme: string; value: string } | { scheme:
     const r = spawnSync("cosign", ["sign-blob", "--yes", "--key", cosignKey, "-"], {
       input: payload,
       encoding: "utf-8",
+      timeout: 10_000,
     })
     if (r.status === 0 && r.stdout) return { scheme: "cosign", value: r.stdout.trim() }
   }
@@ -187,11 +237,14 @@ export async function run(input: {
   }
   await writeFile(path.join(stagingDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8")
 
-  const proc = Bun.spawn(["tar", "-czf", tarballPath, "-C", stagingDir, "."], {
+  const proc = Bun.spawn(["tar", "-czf", path.basename(tarballPath), "-C", path.basename(stagingDir), "."], {
+    cwd: opDir,
     stdout: "pipe",
     stderr: "pipe",
   })
+  const tarTimer = setTimeout(() => proc.kill(), 120_000)
   const exit = await proc.exited
+  clearTimeout(tarTimer)
   if (exit !== 0) {
     const stderr = await new Response(proc.stderr).text()
     throw new Error(`tar failed (exit ${exit}): ${stderr}`)
