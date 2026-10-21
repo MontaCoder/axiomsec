@@ -48,8 +48,14 @@ jobs:
       - run: bun typecheck
       - run: bun run build --single --skip-install
         working-directory: packages/axiomsec
-      - run: bun test --timeout 30000
+      - name: Test if present
         working-directory: packages/axiomsec
+        run: |
+          if find . -path './node_modules' -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit | grep -q .; then
+            bun test --timeout 30000
+          else
+            echo "No tests are shipped in this lite repo; skipping bun test."
+          fi
 
   startup-smoke:
     name: Startup Smoke (${{ matrix.os }})
@@ -200,7 +206,6 @@ jobs:
 
           mkdir -p publish-packages/axiomsec
           cp -r packages/axiomsec/bin publish-packages/axiomsec/bin
-          cp packages/axiomsec/script/postinstall.mjs publish-packages/axiomsec/postinstall.mjs
           cp README.md publish-packages/axiomsec/README.md
           cp LICENSE publish-packages/axiomsec/LICENSE
           node -e "
@@ -241,9 +246,6 @@ jobs:
                     bun: '>=1.3.11'
                   },
                   bin: source.bin,
-                  scripts: {
-                    postinstall: 'bun ./postinstall.mjs || node ./postinstall.mjs',
-                  },
                   optionalDependencies: deps,
                 },
                 null,
@@ -267,7 +269,7 @@ jobs:
             const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
             if (pkg.name !== 'axiomsec') throw new Error('meta package must be named axiomsec');
             if (!pkg.optionalDependencies || Object.keys(pkg.optionalDependencies).length === 0) throw new Error('missing binary optionalDependencies');
-            for (const file of ['README.md', 'LICENSE', 'bin/axiomsec', 'postinstall.mjs']) {
+            for (const file of ['README.md', 'LICENSE', 'bin/axiomsec']) {
               if (!fs.existsSync(path.join(root, file))) throw new Error('missing publish file: ' + file);
             }
             for (const [name] of Object.entries(pkg.optionalDependencies)) {

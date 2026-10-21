@@ -20,7 +20,10 @@ function escapeRegExp(value: string) {
 
 function extractChangelogSection(changelog: string, version: string) {
   const escaped = escapeRegExp(version.replace(/^v/, ""))
-  const header = new RegExp(`^##\\s+\\[?v?${escaped}\\]?(?:\\s|$)`, "im")
+  const header = new RegExp(
+    `^##\\s+\\[?v?${escaped}\\]?(?:\\s*[—–-]\\s*\\d{4}-\\d{2}-\\d{2})?(?:\\s|$)`,
+    "im",
+  )
   const match = header.exec(changelog)
   if (!match) return undefined
 

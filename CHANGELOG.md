@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-21
+
+Agent harness documentation release plus a build-tooling fix. No runtime
+behavior changes.
+
+### Added
+
+- **Layered agent harness.** Root `AGENTS.md` (auto-loaded into AxiomSec
+  sessions) plus on-demand `docs/agents/` playbooks for architecture,
+  invariants, debugging, bug hunting, change recipes, verification, and a
+  dated risk register.
+- **PR verification template.** Risk classification, automated and manual
+  proof, invariant checks, and rollback notes.
+- **Dated risk register.** Documents verified scope/permission/proof/secret
+  gaps, persistence and concurrency risks, platform/build issues, and the
+  `/initialize` vs `/init` documentation drift, with safe re-verify commands.
+
+### Changed
+
+- Version bumped to `0.2.0` across `axiomsec`, `@axiomsec/sdk`,
+  `@axiomsec/plugin`, and `@axiomsec/shared`.
+- README version banner updated to 0.2.0.
+
+### Fixed
+
+- Standalone builds no longer fail when the bundler tries to resolve
+  Playwright’s optional `electron` and `chromium-bidi` imports; those paths are
+  externalized in `packages/axiomsec/script/build.ts`.
+- Release validation now runs `bun test` only when test files exist, so the
+  lite repo no longer fails its release gate on zero tests.
+- The npm publish job no longer references a missing `postinstall.mjs`; the
+  launcher resolves the platform binary from its optional dependency.
+- Release-note extraction now strips the optional date after a changelog
+  version header.
+
+### Notes
+
+- Documentation and build-tooling release; runtime behavior is unchanged.
+- The lite repository still ships no tests. Verification remains
+  typecheck/lint/build plus the manual scenarios in
+  `docs/agents/VERIFICATION.md`.
+- Use AxiomSec only on systems you own, lab environments, CTFs, or targets you
+  are explicitly authorized to test.
+
 ## [0.1.0] — 2026-10-21
 
 Initial release of AxiomSec: a terminal-native AI cyber operator harness for
@@ -69,5 +113,6 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.1.0
