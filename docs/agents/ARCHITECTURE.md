@@ -100,7 +100,7 @@ Operation creation writes initial facts/ledger/relations with whole-file writes 
 - **Replay**: `axiomsec/1` header/event/trailer; trailer carries `sha256_body` and an optional signature (`packages/axiomsec/src/core/replay/format.ts:7-42`). CLI `verify` checks the body hash only; signature verification is not implemented (`packages/axiomsec/src/cli/cmd/replay.ts:93-113`).
 - **Findings**: promotion requires evidence refs; the oracle passes only with evidence plus replay or a structured, domain-valid exemption (`packages/axiomsec/src/core/cyber/oracle.ts:66-133`). Reportability is defined at `packages/axiomsec/src/core/cyber/finding.ts:189-194`; rejected/stale claims remain visible.
 - **Reports**: deliverable bundles contain `report.md`, `report.json`, `manifest.json`, and `manifest.sha256` (`packages/axiomsec/src/core/deliverable/build.ts:422-596`).
-- **Share**: copies evidence/cyber/workflow/context, writes a per-file manifest, redacts a limited set of text extensions, optionally signs, and tars the staging directory (`packages/axiomsec/src/tools/share.ts:118-215`).
+- **Share**: copies evidence/cyber/workflow/context, writes a per-file manifest, redacts structured JSON/JSONL and text extensions (JWT, auth/cookie headers, secret keys), optionally signs, and tars the staging directory (`packages/axiomsec/src/tools/share.ts:118-243`).
 - **Important gap:** finding promotion accepts arbitrary evidence-ref strings; it does not verify that the hash exists or that the bytes match (`packages/axiomsec/src/tools/finding.ts:245-309`). See `KNOWN-RISKS.md` `RISK-PROOF-01`.
 
 ## 7. Surfaces
@@ -122,7 +122,7 @@ Operation creation writes initial facts/ledger/relations with whole-file writes 
   - Explicit deny throws `ScopeDeniedError` (`:103-117`).
   - `ask` is **returned**, not thrown; the caller decides what to do next.
 - Guard coverage today: `http_request`, `webfetch`, `scanner`, `appsec_probe` call it. `browser`, `net`, and `bash` do not. The boundary check is a per-tool convention, not a runtime choke point.
-- `debug agent` executes a tool without an LLM call but turns `ask` into allow except explicit deny (`packages/axiomsec/src/cli/cmd/debug/agent.ts:181-190`). `run --dangerously-skip-permissions` auto-approves every ask (`packages/axiomsec/src/cli/cmd/run.ts:544-548`).
+- `debug agent` executes a tool without an LLM call; ask-level tools require `--dangerously-skip-permissions` and print each bypass (`packages/axiomsec/src/cli/cmd/debug/agent.ts:35-38,190-200`). `run --dangerously-skip-permissions` auto-approves every ask (`packages/axiomsec/src/cli/cmd/run.ts:544-548`).
 
 ## 9. Server, API, SDK, ACP
 

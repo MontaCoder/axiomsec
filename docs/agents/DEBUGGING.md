@@ -24,7 +24,7 @@ This repo has no test suite. The verification scenarios live in [VERIFICATION.md
 | Ripgrep layer | `axiomsec debug rg <tree / files / search>` | Diagnoses the bundled search worker. |
 | Skills | `axiomsec debug skill` | Lists discovered skills. |
 | Snapshots | `axiomsec debug snapshot <track / patch / diff>` | Workspace snapshots, not operation state. |
-| Agent/tool | `axiomsec debug agent <name> --tool <id> --params '<json>'` | Runs a tool without an LLM call. Requires a default model; **bypasses asks except explicit deny** (`packages/axiomsec/src/cli/cmd/debug/agent.ts:181-190`). |
+| Agent/tool | `axiomsec debug agent <name> --tool <id> --params '<json>'` | Runs a tool without an LLM call. Requires a default model; **ask-level tools require `--dangerously-skip-permissions`, which prints each bypass** (`packages/axiomsec/src/cli/cmd/debug/agent.ts:35-38,190-200`). |
 | Database | `axiomsec db path`, `axiomsec db query "..." --format json` | Query opens SQLite read-only (`packages/axiomsec/src/cli/cmd/db.ts:28-48`). |
 | Operations | `axiomsec operation list --format json`, `axiomsec operation show [slug] --format <summary / json / context / markdown>` | `show` defaults to the active operation. |
 | Sessions | `axiomsec session list --format json` | Session IDs for replay and DB inspection. |
@@ -170,7 +170,7 @@ Inspect `.axiomsec/operation/<slug>/` and the SQLite rows. This proves create/ac
 "$BIN" debug agent security --tool scope --params '{"action":"status"}'
 ```
 
-Requires a configured default model (the command creates a session and resolves a model, but does not call it). **It bypasses asks except explicit deny.** Use only on a disposable workspace. For target-touching tools, prefer a loopback fixture.
+Requires a configured default model (the command creates a session and resolves a model, but does not call it). **Ask-level tools fail unless `--dangerously-skip-permissions` is passed; each bypass is printed.** Use only on a disposable workspace. For target-touching tools, prefer a loopback fixture.
 
 ### 5.3 Headless server
 

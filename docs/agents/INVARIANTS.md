@@ -11,57 +11,57 @@ An invariant is a design requirement. If code violates it, that is a bug or a do
 
 - **Rule:** Before DNS resolution, a socket, a browser launch, or a target-touching subprocess, the request must be checked against the active operation’s boundary.
 - **Why:** AxiomSec is an authorized-testing harness; one unguarded path makes every other control optional.
-- **Enforced at:** `packages/axiomsec/src/core/boundary/guard.ts:87-118`; call sites in `packages/axiomsec/src/tools/http-request.ts`, `packages/axiomsec/src/tools/webfetch.ts`, `packages/axiomsec/src/tools/scanner.ts`, `packages/axiomsec/src/tools/appsec-probe.ts`.
-- **Check:** Enumerate every egress path and confirm `Guard.check*` runs before I/O. A missing active operation returns `allow` (`packages/axiomsec/src/core/boundary/guard.ts:89`), so “no operation” is not a safe default for target work.
-- **Known risk:** `RISK-SCOPE-01`, `RISK-SCOPE-02`.
+- **Enforced at:** `packages/axiomsec/src/core/boundary/guard.ts:87-118`; call sites in `packages/axiomsec/src/tools/http-request.ts`, `webfetch.ts`, `scanner.ts`, `appsec-probe.ts`, `browser.ts:233-247,953-960`, and `net.ts:113-121`.
+- **Check:** Enumerate every egress path and confirm `Guard.check*` runs before I/O. A boundary `ask` must trigger the separate `scope` permission (default `ask`) before the request; a missing active operation returns `allow` (`packages/axiomsec/src/core/boundary/guard.ts:89`), so “no operation” is not a safe default for target work.
+- **Known risk:** `RISK-SCOPE-01`, `RISK-SCOPE-03` (`bash`); `RISK-SCOPE-02` fixed 2026-10-21.
 
 ### SEC-02 — Guard coverage is mandatory for new target-touching tools
 
 - **Rule:** Any new tool that can reach a target — HTTP, TCP, browser, DNS, subprocess scanner — must call the appropriate `Guard.checkUrl` / `Guard.checkHost` / `Guard.checkPath` before acting.
 - **Why:** Guard is a per-tool convention, not a runtime choke point. Adding a tool silently expands the unguarded surface.
-- **Enforced at:** `packages/axiomsec/src/tools/http-request.ts:73-92`, `packages/axiomsec/src/tools/webfetch.ts:42-59`, `packages/axiomsec/src/tools/scanner.ts:577-596`, `packages/axiomsec/src/tools/appsec-probe.ts:649-652`.
+- **Enforced at:** `packages/axiomsec/src/tools/http-request.ts:73-92`, `packages/axiomsec/src/tools/webfetch.ts:42-59`, `packages/axiomsec/src/tools/scanner.ts:577-596`, `packages/axiomsec/src/tools/appsec-probe.ts:649-652`, `packages/axiomsec/src/tools/browser.ts:233-247,953-960`, `packages/axiomsec/src/tools/net.ts:113-121`.
 - **Check:** `rg -n "Guard\\.(check|checkUrl|checkHost|checkPath)" packages/axiomsec/src/tools` vs `rg -n "fetch\\(|spawn\\(|playwright|net\\.connect" packages/axiomsec/src/tools`.
-- **Known risk:** Current gaps are `browser`, `net`, and `bash` — `RISK-SCOPE-01`.
+- **Known risk:** `bash` remains unguarded — `RISK-SCOPE-03`; `RISK-SCOPE-01` for the per-tool model.
 
 ### SEC-03 — Permission before side effects
 
 - **Rule:** Sensitive actions must call `ctx.ask` with the narrowest permission key and patterns. Do not widen defaults or bypass an ask to make a test pass.
 - **Why:** The permission engine is the human control between the model and the machine. It only works if tools request it and rules resolve to `ask`.
-- **Enforced at:** `packages/axiomsec/src/agent/agent.ts:110-127` (defaults), `packages/axiomsec/src/permissions/evaluate.ts:9-15` (last-match, default ask), `packages/axiomsec/src/session/prompt.ts:374` (plumbing), `packages/axiomsec/src/permissions/permission.ts` (approvals).
-- **Check:** For every write/network/spawn tool, confirm `ctx.ask` exists and the permission key matches the tool id or a documented distinct key. Remember: built-in defaults are `"*": "allow"`; only `http_request` and `browser` are explicit asks in the cyber agents. `.env` protection exists only in the `read` rules; `bash` can read it.
-- **Known risk:** `RISK-PERM-01`, `RISK-PERM-02`, `RISK-PERM-03`.
+- **Enforced at:** `packages/axiomsec/src/agent/agent.ts:110-127` (defaults), `packages/axiomsec/src/permissions/evaluate.ts:9-15` (last-match, default ask), `packages/axiomsec/src/session/prompt.ts:374` (plumbing), `packages/axiomsec/src/permissions/permission.ts` (approvals), `packages/axiomsec/src/tools/vault.ts:41,71,103,162`, `packages/axiomsec/src/tools/identity.ts:94,150,206`.
+- **Check:** For every write/network/spawn tool, confirm `ctx.ask` exists and the permission key matches the tool id or a documented distinct key. Network/shell/secret tools default to `ask`; other built-ins still resolve to `"*": "allow"`. `.env` protection exists in the `read` rules, and `bash` is now ask-by-default.
+- **Known risk:** `RISK-PERM-04`, `RISK-PERM-03`; `RISK-PERM-01` and `RISK-PERM-02` fixed 2026-10-21.
 
 ### SEC-04 — Evidence is immutable and content-addressed
 
 - **Rule:** Evidence bytes are addressed by SHA-256; never mutate a stored file or hand-edit `manifest.jsonl`. New evidence gets a new hash.
 - **Why:** Findings, reports, and replay lose their proof value if the artifact can change under the same reference.
-- **Enforced at:** `packages/axiomsec/src/core/evidence/store.ts:55-103`; writes go through `Evidence.put`, reads through `Evidence.get`.
-- **Check:** A finding/report evidence ref must resolve to a manifest entry and a file. `Evidence.get` currently does not re-hash bytes; treat that as a gap, not permission to mutate files.
-- **Known risk:** `RISK-PROOF-01` (refs are not validated at promotion), `RISK-PERSIST-01` (unlocked manifest append).
+- **Enforced at:** `packages/axiomsec/src/core/evidence/store.ts:55-108`; writes go through `Evidence.put`, reads through `Evidence.get`, integrity through `Evidence.verify`.
+- **Check:** A finding/report evidence ref must resolve to a manifest entry and a file whose bytes re-hash to the ref. Promotion now rejects unknown or tampered refs (`packages/axiomsec/src/tools/finding.ts:266-283`).
+- **Known risk:** none open; `RISK-PERSIST-01` and `RISK-PROOF-01` fixed 2026-10-21.
 
 ### SEC-05 — Findings are reportable only with proof
 
 - **Rule:** A finding is reportable only when `kind === "finding"`, `status === "verified"`, `evidence_refs` is non-empty, and either replay is present or a structured, domain-valid replay exemption exists.
 - **Why:** The product’s differentiator is that the workflow does not let the agent overclaim.
-- **Enforced at:** `packages/axiomsec/src/core/cyber/finding.ts:189-194`; `packages/axiomsec/src/core/cyber/oracle.ts:66-133`; promotion in `packages/axiomsec/src/tools/finding.ts:245-309`.
-- **Check:** Never weaken the predicate or oracle to make a finding pass. `replay_present` means a replay artifact/string exists; it is **not** signature verification. Rejected/stale findings must remain visible, not disappear.
-- **Known risk:** `RISK-PROOF-01`, `RISK-PROOF-02`.
+- **Enforced at:** `packages/axiomsec/src/core/cyber/finding.ts:189-194`; `packages/axiomsec/src/core/cyber/oracle.ts:66-133`; promotion evidence gate in `packages/axiomsec/src/tools/finding.ts:266-283`.
+- **Check:** Never weaken the predicate or oracle to make a finding pass. Every promotion evidence ref must resolve through `Evidence.verify`; `replay_present` means a replay artifact/string exists and is **not** signature verification. Signed replays are verified by `replay verify` only when a public key is configured. Rejected/stale findings must remain visible, not disappear.
+- **Known risk:** none open; `RISK-PROOF-01` and `RISK-PROOF-02` fixed 2026-10-21.
 
 ### SEC-06 — Secrets are contained, minimized, and not logged
 
 - **Rule:** Do not log Authorization/Cookie/API keys, do not put secrets in tool args when avoidable, and do not assume share/replay redaction removes them.
-- **Why:** Tool args are ledgered; evidence can include request headers/cookies/bodies; share copies evidence/cyber/workflow/context. Redaction is narrow.
-- **Enforced at:** `packages/axiomsec/src/tools/tool.ts:247-259` (ledger input), `packages/axiomsec/src/tools/vault.ts:59-74` (reveal), `packages/axiomsec/src/core/vault.ts:45-49` (0600 plaintext), `packages/axiomsec/src/tools/share.ts:41,54-60,141-168` (redaction), `packages/axiomsec/src/core/replay/redact.ts:13-39`.
-- **Check:** Use canary strings on a disposable operation; build a share bundle; grep the tarball for the canary. Never use real credentials in verification.
-- **Known risk:** `RISK-SECRET-01`, `RISK-SECRET-02`.
+- **Why:** Tool args are ledgered; evidence can include request headers/cookies/bodies; share copies evidence/cyber/workflow/context. Redaction covers structured JSON/JSONL and common text secrets, but binary/unknown formats and positional CSV values are not scanned.
+- **Enforced at:** `packages/axiomsec/src/tools/tool.ts:108-121,274` (arg redaction before ledger/workflow), `packages/axiomsec/src/tools/vault.ts:41,71,103,162` (vault asks), `packages/axiomsec/src/tools/identity.ts:94,150,206` (identity asks), `packages/axiomsec/src/tools/vault.ts` (no value in ledger data), `packages/axiomsec/src/core/vault.ts:45-49` (0600 plaintext), `packages/axiomsec/src/tools/share.ts:41-99,215-216` (staged-tree redaction), `packages/axiomsec/src/core/replay/redact.ts:13-70` (structured and text redaction).
+- **Check:** Use canary strings on a disposable operation; build a share bundle with `redact:true` and `redact:false`; grep the tarballs for the canary. Never use real credentials in verification.
+- **Known risk:** `RISK-SECRET-03`; `RISK-SECRET-01` and `RISK-SECRET-02` fixed 2026-10-21.
 
 ### SEC-07 — Server and MCP surfaces stay local and authenticated
 
-- **Rule:** Do not expose the server beyond loopback without a password and an explicit operator decision. Do not assume OAuth callbacks are loopback-only.
+- **Rule:** The server refuses non-loopback binds without a password. Do not expose the server beyond loopback without an explicit operator decision. Do not assume OAuth callbacks are loopback-only unless the bind is explicit.
 - **Why:** The headless server can drive tools and read workspace data; an unauthenticated bind is remote code execution by another name.
-- **Enforced at:** `packages/axiomsec/src/cli/network.ts:5-15` (defaults), `packages/axiomsec/src/server/middleware.ts:39-49` (optional auth), `packages/axiomsec/src/cli/cmd/serve.ts:11-12` (warning), `packages/axiomsec/src/mcp/oauth-callback.ts:187` (binds all interfaces).
-- **Check:** `curl` the server with and without `AXIOMSEC_SERVER_PASSWORD`; inspect `--hostname` usage; read the OAuth callback bind before debugging MCP auth.
-- **Known risk:** `RISK-NET-02`.
+- **Enforced at:** `packages/axiomsec/src/cli/cmd/serve.ts:11-18,29-33` (non-loopback password gate), `packages/axiomsec/src/cli/network.ts:5-15` (loopback default), `packages/axiomsec/src/server/middleware.ts:39-49` (auth when configured), `packages/axiomsec/src/mcp/oauth-callback.ts:187` (loopback bind).
+- **Check:** `curl` the loopback server with and without `AXIOMSEC_SERVER_PASSWORD`; a URL `auth_token` must return 401 while Basic auth succeeds; run `serve --hostname 0.0.0.0` without a password and confirm exit 1; read the OAuth callback bind before debugging MCP auth.
+- **Known risk:** none open; `RISK-NET-02` and `RISK-NET-03` fixed 2026-10-21.
 
 ## Engineering invariants
 
@@ -70,24 +70,24 @@ An invariant is a design requirement. If code violates it, that is a bug or a do
 - **Rule:** Do not add module-level `Map`/`Set`/singleton state for per-project or per-session data. Use `Instance` and `InstanceState` (or an Effect service with a scoped cache).
 - **Why:** Module globals leak across projects, sessions, and concurrent test/dev instances.
 - **Enforced at:** `packages/axiomsec/src/project/instance.ts:57-102`, `packages/axiomsec/src/effect/instance-state.ts`, `packages/axiomsec/src/effect/app-runtime.ts`.
-- **Check:** Search for top-level `const ... = new Map(` / `new Set(` in `src/`; inspect whether the key includes project/session. Existing counterexamples: `packages/axiomsec/src/tools/browser.ts:80-81`, `packages/axiomsec/src/core/operation/operation.ts:26`.
-- **Known risk:** `RISK-NET-01`, `RISK-PERSIST-03`.
+- **Check:** Search for top-level `const ... = new Map(` / `new Set(` in `src/`; inspect whether the key includes project/session. Browser sessions are keyed by workspace + operation + TLS mode and close the previous session on switch, but the registry is still process-global by design (`packages/axiomsec/src/tools/browser.ts:143-149`). The migration memo is per-process (`operation.ts:27-29`).
+- **Known risk:** none open; `RISK-NET-01` and `RISK-PERSIST-03` fixed 2026-10-21.
 
 ### ENG-02 — SQLite cyber kernel is canonical
 
 - **Rule:** Read and write operation truth through the kernel services (`Cyber`, `Operation`, `Evidence`, `Observation`, `Plan`, `Deliverable`). JSONL, context packs, markdown notebooks, and reports are projections.
 - **Why:** Making a projection authoritative creates drift and lets one surface overwrite another.
 - **Enforced at:** `packages/axiomsec/src/core/operation/operation.ts:1-14`; `packages/axiomsec/src/core/cyber/cyber.ts`; `packages/axiomsec/src/core/operation/snapshot.ts`.
-- **Check:** New code must not parse/rewrite `.axiomsec` JSONL as the source of truth. If a projection is stale, rebuild it; do not “fix” the kernel from the projection.
-- **Known risk:** `RISK-PERSIST-01`, `RISK-PERSIST-02`.
+- **Check:** New code must not parse/rewrite `.axiomsec` JSONL as the source of truth. If a projection is stale, rebuild it; do not “fix” the kernel from the projection. Projection and manifest appends take the shared file lock (`support/lock.ts`).
+- **Known risk:** none open; `RISK-PERSIST-01` and `RISK-PERSIST-02` fixed 2026-10-21.
 
 ### ENG-03 — Every network and subprocess call has a timeout or abort
 
 - **Rule:** Network requests, subprocess spawns, installers, signers, and archive tools must accept an `AbortSignal` or explicit timeout and surface a useful error.
 - **Why:** The agent loop is long-lived; one hung call stalls a session and can exhaust resources.
-- **Enforced at:** `packages/axiomsec/src/tools/http-request.ts:94-111` (timeout), `packages/axiomsec/src/tools/bash.ts` (abort/timeout), `packages/axiomsec/src/session/processor.ts:602-655` (semantic watchdog), `packages/axiomsec/src/session/llm.ts` provider timeouts.
-- **Check:** `rg -n "fetch\\(|spawn\\(|spawnSync\\(|exec\\(" packages/axiomsec/src packages/sdk/src` and inspect each for a signal/timeout. Do not add a new bare call.
-- **Known risk:** `RISK-TIME-01`.
+- **Enforced at:** `packages/axiomsec/src/tools/http-request.ts:94-111` (timeout), `packages/axiomsec/src/tools/bash.ts` (abort/timeout), `packages/axiomsec/src/tools/share.ts:136,145,245-247` (signer/tar bounds), `packages/axiomsec/src/npm/npm.ts:43` (registry timeout), `packages/axiomsec/src/installer/installation.ts:113,133,168` (installer bounds), `packages/axiomsec/src/session/processor.ts:602-655` (semantic watchdog), `packages/axiomsec/src/session/llm.ts` provider timeouts.
+- **Check:** `rg -n "fetch\\(|spawn\\(|spawnSync\\(|exec\\(" packages/axiomsec/src packages/sdk/src` and inspect each for a signal/timeout. Do not add a new bare call. SDK streaming keeps `req.timeout=false` intentionally; callers must cancel.
+- **Known risk:** none open; `RISK-TIME-01` fixed 2026-10-21 (SDK streaming residual).
 
 ### ENG-04 — The tool wrapper owns audit, workflow, context, and truncation
 
@@ -109,17 +109,17 @@ An invariant is a design requirement. If code violates it, that is a bug or a do
 
 - **Rule:** Do not hardcode `/tmp`, POSIX-only path assumptions, or case-sensitive path logic. Canonicalize paths before containment checks.
 - **Why:** Builds and dev run on Windows, macOS, Linux; lexical containment and `/tmp` are recurring failure sources.
-- **Enforced at:** `packages/axiomsec/src/support/filesystem.ts:123-125` (containment), `packages/axiomsec/src/project/instance.ts:94-102`, `packages/axiomsec/script/build.ts:54` (Windows linker), `packages/axiomsec/src/cli/win32.ts`.
-- **Check:** `rg -n "/tmp|C:\\\\|\\\\\\\\" packages/axiomsec/src packages/axiomsec/script`; test the affected path on the current platform; consider symlinks/junctions. `packages/axiomsec/drizzle.config.ts:8` and `packages/axiomsec/src/cli/cmd/replay.ts:122` are current violations.
-- **Known risk:** `RISK-BUILD-01`, `RISK-PATH-01`.
+- **Enforced at:** `packages/shared/src/filesystem.ts:227-247` (canonical containment used by `Instance.containsPath`), `packages/axiomsec/src/project/instance.ts:94-102`, `packages/axiomsec/src/support/filesystem.ts:123-143` (plugin/TUI containment), `packages/axiomsec/script/build.ts:54` (Windows linker), `packages/axiomsec/src/cli/win32.ts`.
+- **Check:** `rg -n "/tmp|C:\\\\|\\\\\\\\" packages/axiomsec/src packages/axiomsec/script`; test the affected path on the current platform; include a symlink/junction escape case.
+- **Known risk:** none open; `RISK-BUILD-01` and `RISK-PATH-01` fixed 2026-10-21.
 
 ### ENG-07 — Fail visibly on audit, proof, migration, and deletion paths
 
 - **Rule:** Do not swallow errors that affect the ledger, evidence, findings, migrations, or destructive operations. Best-effort behavior is acceptable only for UI refresh/projection conveniences and must be visibly best-effort.
 - **Why:** Silent failure turns a proof system into a confidence system.
-- **Enforced at:** `packages/axiomsec/src/tools/tool.ts:247-360` (ledger), `packages/axiomsec/src/core/operation/operation.ts:26-31` (migration), `packages/axiomsec/src/core/evidence/store.ts` (manifest), `packages/axiomsec/src/core/cyber/cyber.ts` (projection appends).
+- **Enforced at:** `packages/axiomsec/src/tools/tool.ts:247-360` (ledger), `packages/axiomsec/src/core/operation/operation.ts:27-46` (migration retry/log), `packages/axiomsec/src/core/operation/migration.ts:73-86` (aggregate failures), `packages/axiomsec/src/core/evidence/store.ts` (manifest), `packages/axiomsec/src/core/cyber/cyber.ts` (projection appends).
 - **Check:** Review every `.catch(() => ...)` near audit/proof/migration paths; if the failure can invalidate state, propagate it or record a visible warning. Do not add new swallowed errors for convenience.
-- **Known risk:** `RISK-PERSIST-03`, projection/migration gaps in [KNOWN-RISKS.md](KNOWN-RISKS.md) leads.
+- **Known risk:** projection gaps in [KNOWN-RISKS.md](KNOWN-RISKS.md) leads; `RISK-PERSIST-03` fixed 2026-10-21.
 
 ## Invariant change protocol
 

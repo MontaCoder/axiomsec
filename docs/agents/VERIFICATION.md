@@ -66,7 +66,7 @@ cat .axiomsec/operation/active
 ls .axiomsec/operation/verify/cyber .axiomsec/operation/verify/context
 ```
 
-**Pass:** slug/kind/target/active marker exist; `cyber/{ledger,facts,relations}.jsonl` exist; the context pack exists; the inferred scope includes `127.0.0.1`. **Evidence:** the JSON output and file list. Do not create two same-label operations in the same minute in a real workspace (see `RISK-PERSIST-02`).
+**Pass:** slug/kind/target/active marker exist; `cyber/{ledger,facts,relations}.jsonl` exist; the context pack exists; the inferred scope includes `127.0.0.1`. **Evidence:** the JSON output and file list. Same-label operations are safe to create: three rapid creates must produce distinct slugs and preserve the first operation’s projections (`RISK-PERSIST-02` fixed 2026-10-21). Legacy migration: create `.axiomsec/operation/legacy-op/events.jsonl` before the first command; after `operation list`, `_legacy/events.jsonl` and a migrated `axiomsec.md` must exist (`RISK-PERSIST-03`).
 
 ### V-S3 — Tool wrapper, permissions, and scope (provider required for execution)
 
@@ -77,14 +77,35 @@ rg -n "Guard\.(check|checkUrl|checkHost|checkPath)" packages/axiomsec/src/tools
 rg -n "ctx\.ask" packages/axiomsec/src/tools/{http-request,scanner,webfetch,browser,net,bash}.ts
 ```
 
+Expected: Guard calls exist in `http-request`, `webfetch`, `scanner`, `appsec-probe`, `browser`, and `net`; `bash` has none (`RISK-SCOPE-03`).
+
 With a configured default model:
 
 ```bash
 "$BIN" debug agent security --tool scope --params '{"action":"status"}'
-"$BIN" debug agent security --tool http_request --params '{"url":"http://127.0.0.1:18080/","method":"GET"}'
+"$BIN" debug agent security --tool http_request --dangerously-skip-permissions --params '{"url":"http://127.0.0.1:18080/","method":"GET"}'
 ```
 
-**Pass:** scope status shows the active operation; the loopback request returns a status; the ledger contains `tool.called`/`tool.completed`; evidence is written when an operation is active. `debug agent` bypasses asks except explicit deny — note it in the evidence. **Negative check:** a request to a different loopback port is outside `in_scope`; the boundary returns `ask`, but the tool’s own ask is bypassed by `debug agent`. Record this as the known `RISK-SCOPE-02` behavior, not a pass. **Evidence:** command, output, DB rows/ledger.
+Scope enforcement checks (strict mode, loopback fixtures only):
+
+```bash
+"$BIN" debug agent security --tool scope --params '{"action":"set","level":"strict"}'
+# expect "out of scope: host=127.0.0.2" before any connect
+"$BIN" debug agent security --tool net --dangerously-skip-permissions --params '{"op":"tcp_send","host":"127.0.0.2","port":9,"timeout_ms":500}'
+# start a local listener on 127.0.0.1:19090 first; expect the banner
+"$BIN" debug agent security --tool net --dangerously-skip-permissions --params '{"op":"banner_grab","host":"127.0.0.1","port":19090,"timeout_ms":2000}'
+# local page on 127.0.0.1:19091 embedding a 127.0.0.2:19092 subresource; expect the page to load
+# and the 127.0.0.2 tracker to receive no browser request
+"$BIN" debug agent security --tool browser --dangerously-skip-permissions --params '{"action":"navigate","url":"http://127.0.0.1:19091/"}'
+# expect "out of scope: url=http://127.0.0.2:19092/"
+"$BIN" debug agent security --tool browser --dangerously-skip-permissions --params '{"action":"navigate","url":"http://127.0.0.2:19092/"}'
+```
+
+If Playwright’s bundled Chromium revision is missing, set `AXIOMSEC_CHROMIUM_PATH` to an installed Chrome/Chromium binary. These checks were run on 2026-10-21 for `RISK-SCOPE-01`.
+
+TLS check (loopback self-signed fixture): serve HTTPS with a generated certificate, then navigate without `ignore_https_errors` (expect `ERR_CERT_AUTHORITY_INVALID`) and with `"ignore_https_errors":true` (expect the page to load). Browser sessions are keyed by workspace + operation + TLS mode; switching keys closes the previous browser (`RISK-NET-01`).
+
+**Pass:** scope status shows the active operation; the loopback request returns a status; `net` denies the out-of-scope host before connect and completes against the in-scope listener; `browser` loads the in-scope page, blocks the out-of-scope subresource, and denies the explicit out-of-scope URL; the TLS fixture fails by default and loads only with the opt-in; the ledger contains `tool.called`/`tool.completed`/`tool.error` as appropriate; evidence is written when an operation is active. A disposable `vault set` with a canary must leave zero canary occurrences in the ledger while `vault get --reveal` still returns it (`RISK-SECRET-02` partial); run it with `--dangerously-skip-permissions` because `vault` now defaults to ask. `debug agent` refuses ask-level tools unless `--dangerously-skip-permissions` is passed; with the flag it prints each bypass — record that in the evidence. **Negative check:** without the flag, `http_request`, `vault`, and `bash` must exit 1 with “resolves to ask”. With opsec `normal` and only `127.0.0.1` in scope, `net`/`http_request`/`browser` to `127.0.0.2` must exit 1 with “permission 'scope' resolves to ask”; in-scope traffic must not request `scope`. With the flag, the bypass is test-only and a boundary `ask` is not a human approval. **Evidence:** commands, outputs, tracker log, DB rows/ledger. Verified 2026-10-21 for `RISK-SCOPE-02` and `RISK-NET-01`.
 
 ### V-S4 — Evidence → finding → oracle → report (provider required for promotion)
 
@@ -106,25 +127,42 @@ Full flow with a provider:
 4. Build a report: `debug agent security --tool report --params '{"action":"build","format":"md"}'`.
 5. Inspect `.axiomsec/operation/<slug>/deliverable/bundle-*/`.
 
-**Pass:** a finding with real evidence + replay is `verified`/reportable; a finding with a fabricated 64-hex ref is also accepted today — record that as `RISK-PROOF-01`, not a pass. **Negative case:** fabricated evidence must be expected to fail after a fix. **Evidence:** the evidence SHA, finding status, report bundle path.
+**Pass:** a finding with real evidence + replay is `verified`/reportable; a finding with a fabricated 64-hex ref is rejected with `unresolved_evidence`, and `finding status` reports `found: false`; a stored artifact whose bytes no longer match its SHA is also rejected. **Evidence:** the evidence SHA, promotion output, finding status, report bundle path.
+
+Negative checks (disposable operation only):
+
+```bash
+# fabricated ref — expect "Promotion rejected: evidence refs do not resolve"
+FAKE="$(printf 'a%.0s' {1..64})"
+"$BIN" debug agent security --tool finding --params "{\"action\":\"promote\",\"key\":\"fabricated\",\"evidence\":[\"$FAKE\"],\"replay\":\"canary\"}"
+
+# tampered artifact — append bytes to a stored evidence file, then promote with its old SHA;
+# expect rejection because Evidence.verify re-hashes the bytes
+```
+
+A rejected promotion must not create a finding fact (`finding status` → `found: false`). These cases were verified on 2026-10-21 for `RISK-PROOF-01`.
 
 ### V-S5 — Headless server and auth (no provider)
 
 ```bash
 AXIOMSEC_SERVER_PASSWORD=canary "$BIN" serve --hostname 127.0.0.1 --port 4096 &
-curl -s -u axiomsec:canary http://127.0.0.1:4096/config | head
+curl -s -u axiomsec:canary http://127.0.0.1:4096/config | head          # expect 200 + JSON
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4096/config   # expect 401
+TOKEN="$(printf 'axiomsec:canary' | base64 -w0)"
+curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:4096/config?auth_token=$TOKEN"  # expect 401
 kill %1
+# non-loopback without a password must refuse before listening
+env -u AXIOMSEC_SERVER_PASSWORD "$BIN" serve --hostname 0.0.0.0 --port 4097; echo "exit=$?"  # expect 1
 ```
 
-Repeat without `AXIOMSEC_SERVER_PASSWORD`; expect a warning and a 200. **Pass:** loopback bind, auth enforced when configured, unauthenticated warning when not. **Do not** bind `0.0.0.0`.
+Repeat the loopback start without `AXIOMSEC_SERVER_PASSWORD`; expect a warning and a 200. **Pass:** loopback bind, auth enforced when configured, URL tokens rejected, non-loopback without a password refused with exit 1, loopback without a password warns. **Do not** bind `0.0.0.0` with a password in this test. Verified 2026-10-21 for `RISK-NET-02` and `RISK-NET-03`.
 
 ### V-S6 — Share redaction canary (provider required, or module-level)
 
 With a provider, add a canary evidence artifact containing `Authorization: Bearer canary-...`, then:
 
 ```bash
-"$BIN" debug agent security --tool share --params '{"action":"build","redact":true}'
+"$BIN" debug agent security --tool share --dangerously-skip-permissions --params '{"action":"build","redact":true}'
 ```
 
 Locate the tarball from the output and inspect it:
@@ -134,7 +172,7 @@ tar -tzf .axiomsec/operation/<slug>/share-*.tar.gz | head
 tar -xOzf .axiomsec/operation/<slug>/share-*.tar.gz | grep -n "canary-\|authorization\|cookie" || true
 ```
 
-**Pass:** the bundle exists and its manifest hashes match. **Important:** current redaction is JWT-only and limited to selected text extensions; finding the canary is a confirmed `RISK-SECRET-01`, not a test failure to hide. **Evidence:** tarball path, grep output, manifest entry.
+**Pass:** the bundle exists, `tar -xOzf ... | grep -n "canary-\|authorization\|cookie"` finds no canary **in a recognizable Authorization/Cookie or secret-key field**, redacted JSON remains parseable, and every file hash in the bundle's `manifest.json` matches the extracted file. A bare canary string with no key/header context is expected to survive; record it as `RISK-SECRET-03`, not a pass. Binary and extensionless artifacts are not content-scanned; never put real credentials in evidence. Build once with `redact:false` as a control and confirm the canary appears there. **Evidence:** both tarball paths, grep counts, manifest verification output. Verified 2026-10-21 for `RISK-SECRET-01` and `RISK-BUILD-04`.
 
 ### V-S7 — Replay save/show/verify (no provider)
 
@@ -149,7 +187,7 @@ SID="$(curl -s -X POST http://127.0.0.1:4096/session -H 'content-type: applicati
 kill %1
 ```
 
-**Pass:** `verify` reports `sha256: ok`; `show` renders the transcript. If the trailer is signed, `verify` says signature verification is not implemented (`RISK-PROOF-02`). **Evidence:** the verify output and file path.
+**Pass:** `verify` reports `sha256: ok`; `show` renders the transcript. Signed trailers are verified when the matching public key is configured (`AXIOMSEC_MINISIGN_PUBKEY` or `COSIGN_PUBKEY`) and the tool is on PATH; a signed replay without a usable key prints `signature: <scheme> UNVERIFIED` and exits 1. Unsigned replays exit 0 with `signature: none`. **Evidence:** the verify output and file path. Verified 2026-10-21 for `RISK-PROOF-02`.
 
 ### V-S8 — Build and platform parity (no provider)
 
@@ -160,7 +198,77 @@ bun run --cwd packages/axiomsec build --single --skip-install
 "$BIN" --version
 ```
 
-**Pass:** all exit 0; the produced binary prints a version. On Windows, also inspect the `/tmp` risks (`RISK-BUILD-01`) and the Playwright optional-dependency failure (`RISK-BUILD-03`); do not treat a successful build as proof that `db generate` or replay signing works. If the build fails for an environment reason, record the exact command/output and do not claim a pass.
+**Pass:** all exit 0; the produced binary prints a version. `"$BIN" generate | head -c 200` prints an OpenAPI 3.1 document; SDK regeneration is blocked on the missing generator config (`RISK-BUILD-02`). On Windows, `/tmp` paths are no longer expected in code (`RISK-BUILD-01` fixed 2026-10-21) and the Playwright optional-dependency failure is fixed (`RISK-BUILD-03`); do not treat a successful build as proof that `db generate` or replay signing works. If the build fails for an environment reason, record the exact command/output and do not claim a pass.
+
+### V-S9 — Path containment (no provider)
+
+Run from the repo root with a disposable temp directory:
+
+```bash
+bun -e '
+import { AppFileSystem } from "./packages/shared/src/filesystem.ts"
+import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+const base = await mkdtemp(join(tmpdir(), "contain-"))
+const parent = join(base, "parent"), outside = join(base, "outside")
+await mkdir(parent); await mkdir(outside)
+await writeFile(join(parent, "inside.txt"), "ok")
+await writeFile(join(outside, "secret.txt"), "secret")
+await symlink(outside, join(parent, "link"), "junction")
+console.log("inside", AppFileSystem.contains(parent, join(parent, "inside.txt")))
+console.log("outside", AppFileSystem.contains(parent, join(outside, "secret.txt")))
+console.log("link", AppFileSystem.contains(parent, join(parent, "link", "secret.txt")))
+console.log("missing", AppFileSystem.contains(parent, join(parent, "new", "file.txt")))
+await rm(base, { recursive: true, force: true })
+'
+```
+
+**Pass:** `inside true`, `outside false`, `link false`, `missing true`. On non-Windows, use `symlink(outside, link)` without the junction type. Verified 2026-10-21 for `RISK-PATH-01`.
+
+### V-S10 — Evidence manifest concurrency (no provider)
+
+Run from the repo root:
+
+```bash
+bun -e '
+import { Flock } from "./packages/shared/src/util/flock.ts"
+import * as Evidence from "./packages/axiomsec/src/core/evidence/store.ts"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+const base = await mkdtemp(join(tmpdir(), "evidence-lock-"))
+Flock.setGlobal({ state: join(base, "state") })
+const ws = join(base, "ws")
+await Promise.all(Array.from({ length: 8 }, () => Evidence.put(ws, "op", "same-canary", { ext: "txt" })))
+const manifest = await readFile(join(ws, ".axiomsec", "operation", "op", "evidence", "manifest.jsonl"), "utf8")
+console.log("manifest lines:", manifest.trim().split("\n").filter(Boolean).length)
+await rm(base, { recursive: true, force: true })
+'
+```
+
+**Pass:** exactly `1` manifest line for the shared content. An unlocked control run without `Flock.setGlobal` may produce duplicates. Verified 2026-10-21 for `RISK-PERSIST-01`.
+
+### V-S11 — Agent loop with a local mock provider (no external credentials)
+
+1. Start an OpenAI-compatible SSE server on `127.0.0.1:19099` that returns one text chunk (`MOCK-PROVIDER-OK`) and a `finish_reason: "stop"` chunk with `usage`.
+2. In a disposable workspace, configure:
+   ```json
+   {
+     "model": "mock/mock-model",
+     "provider": {
+       "mock": {
+         "id": "mock", "name": "Mock", "env": ["MOCK_API_KEY"],
+         "npm": "@ai-sdk/openai-compatible",
+         "options": { "baseURL": "http://127.0.0.1:19099/v1", "apiKey": "mock" },
+         "models": { "mock-model": { "name": "Mock", "tool_call": true, "limit": { "context": 8192, "output": 1024 }, "cost": { "input": 0, "output": 0 } } }
+       }
+     }
+   }
+   ```
+3. Run with `MOCK_API_KEY=mock "$BIN" run "Say MOCK-PROVIDER-OK" --format json`.
+
+**Pass:** a `text` event contains `MOCK-PROVIDER-OK`, a `step_finish` reports usage, the command exits 0, and stdout contains no `"type":"error"` event. Repeat in a workspace with more than 100 changed paths to exercise the snapshot batching (`RISK-SNAPSHOT-01`). Verified 2026-10-21.
 
 ## 4. Clean-room recipe
 
@@ -195,7 +303,7 @@ A change is done only when:
 - Do not claim tests pass. `bun test` is a no-op.
 - Do not run the release workflow to “see if it works.”
 - Do not use real credentials, customer data, or third-party targets.
-- Do not use `--dangerously-skip-permissions` or `debug agent` on a real target.
+- Do not use `--dangerously-skip-permissions`, `debug agent` bypasses, or `run --dangerously-skip-permissions` on a real target.
 - Do not hand-edit generated files.
 - Do not add test files in an ordinary PR; propose a test harness as a separate repo-structure change (it requires `.gitignore`, `bunfig.toml`, and CI changes).
 - Do not reformat unrelated files.

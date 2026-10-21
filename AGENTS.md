@@ -18,10 +18,10 @@ Request path in one breath: TUI or `serve` → session loop → model → tool r
 
 1. **Authorized targets only.** Use owned systems, labs, or loopback fixtures for verification; never send test traffic to third-party hosts.
 2. **Operation before target work.** Create/attach an operation first. `Guard.check` returns `allow` when no operation is active (`packages/axiomsec/src/core/boundary/guard.ts:87-118`).
-3. **Guard every target-touching tool.** Call `Guard.check*` before DNS, sockets, browser launch, or subprocess. Current gaps: `browser`, `net`, `bash`.
-4. **Ask before side effects.** Sensitive tools need `ctx.ask`. Built-in defaults are `"*": "allow"` (`packages/axiomsec/src/agent/agent.ts:110-127`), so an ask only prompts when the resolved ruleset says `ask`.
-5. **Findings need proof.** Reportable means `kind=finding`, `status=verified`, non-empty evidence refs, and replay present OR a structured domain-valid exemption (`packages/axiomsec/src/core/cyber/finding.ts:189-194`). Never weaken the oracle.
-6. **Evidence is immutable; secrets are narrow.** Evidence is SHA-256 addressed; do not mutate bytes or hand-edit `manifest.jsonl`. Tool args are ledgered and share redaction is limited — never put real credentials in args, logs, evidence, or shares.
+3. **Guard every target-touching tool.** Call `Guard.check*` before DNS, sockets, browser launch, or subprocess. `browser` and `net` are covered; the remaining gap is `bash` (`RISK-SCOPE-03`).
+4. **Ask before side effects.** Sensitive tools need `ctx.ask`. Network, shell, and secret tools default to `ask`, and a boundary `ask` maps to the separate `scope` permission; other built-ins remain `"*": "allow"` (`packages/axiomsec/src/agent/agent.ts:110-127`), so an ask only prompts when the resolved ruleset says `ask`.
+5. **Findings need proof.** Reportable means `kind=finding`, `status=verified`, evidence refs that resolve and re-hash through `Evidence.verify`, and replay present OR a structured domain-valid exemption (`packages/axiomsec/src/core/cyber/finding.ts:189-194`). Never weaken the oracle.
+6. **Evidence is immutable; secrets are narrow.** Evidence is SHA-256 addressed; do not mutate bytes or hand-edit `manifest.jsonl`. Tool args are ledgered; share redaction covers text/JSON but not binary or unknown formats — never put real credentials in args, logs, evidence, or shares.
 7. **SQLite cyber kernel is canonical.** JSONL, context packs, reports, and markdown notebooks are projections (`packages/axiomsec/src/core/operation/operation.ts:1-14`).
 8. **Per-project state lives in `Instance`/`InstanceState`.** No module-global `Map`/`Set` for project or session data.
 9. **Network and subprocess calls need a timeout or abort.** Do not add a bare `fetch`/`spawn`/`exec`.
@@ -55,10 +55,10 @@ Use Bun 1.3.11 (the `packageManager` pin); CI installs that version, and a newer
 ## Danger zone
 
 - **Do not run `/init` at repo root.** It is the guided `AGENTS.md` writer (`packages/axiomsec/src/commands/template/initialize.txt:1`), not an operation initializer, and it can rewrite this file. Create operations with `/pwn <target>` or `axiomsec operation new`.
-- `axiomsec debug agent` runs a tool without an LLM call but turns `ask` into allow except explicit deny (`packages/axiomsec/src/cli/cmd/debug/agent.ts:181-190`). Use a disposable workspace only.
+- `axiomsec debug agent` runs a tool without an LLM call; ask-level tools require `--dangerously-skip-permissions`, which prints every bypass (`packages/axiomsec/src/cli/cmd/debug/agent.ts:35-38,190-200`). Use a disposable workspace only.
 - `axiomsec run --dangerously-skip-permissions` auto-approves every ask (`packages/axiomsec/src/cli/cmd/run.ts:544-548`). Do not use it on real targets.
 - Never commit `.env`, `.axiomsec/`, logs, vault exports, real evidence, or customer data.
-- Never expose `serve` beyond loopback without `AXIOMSEC_SERVER_PASSWORD` and an explicit operator decision.
+- `serve` refuses non-loopback binds without `AXIOMSEC_SERVER_PASSWORD`; keep the explicit operator decision and do not expose the port casually.
 
 ## Working rules
 

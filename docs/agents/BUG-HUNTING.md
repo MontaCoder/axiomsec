@@ -152,7 +152,7 @@ BIN="$(find /path/to/axiomsec/packages/axiomsec/dist -path '*/bin/axiomsec*' -ty
 
 ### 5.3 Direct tool execution
 
-`debug agent <agent> --tool <id> --params '<json>'` requires a default model and bypasses asks except explicit deny. Use only on a disposable workspace; for target tools, use loopback.
+`debug agent <agent> --tool <id> --params '<json>'` requires a default model; ask-level tools require `--dangerously-skip-permissions`, which prints each bypass. Use only on a disposable workspace; for target tools, use loopback.
 
 ### 5.4 SQL assertions
 

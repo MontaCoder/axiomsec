@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Finding promotion now resolves every evidence ref against the operation’s
+  evidence manifest and re-hashes the stored bytes; fabricated or tampered
+  refs are rejected with `unresolved_evidence` instead of being promoted as
+  verified (`RISK-PROOF-01`).
+- `debug agent --tool` now runs the tool’s Effect and returns the actual
+  result instead of printing an unevaluated effect object (`RISK-TOOL-01`).
+- Share bundles now redact structured JSON/JSONL/HAR and broader text formats,
+  including Authorization/Cookie headers and common secret keys, instead of
+  JWTs only (`RISK-SECRET-01`).
+- `share build` now works on Windows: tar runs with a relative archive path and
+  the operation directory as its cwd instead of passing `C:\...` arguments
+  (`RISK-BUILD-04`).
+- `browser` and `net` now enforce the active operation boundary before egress;
+  `browser` also aborts HTTP(S) requests that are not explicitly in scope.
+  `bash` remains unguarded (`RISK-SCOPE-03`).
+- Operation creation now reserves slugs atomically and retries with random
+  suffixes, so repeated or concurrent same-label creates cannot clobber state
+  (`RISK-PERSIST-02`).
+- Path containment now canonicalizes symlinks and junctions before comparing,
+  closing an external-directory prompt bypass (`RISK-PATH-01`).
+- Dev database and replay signing temp files now use `os.tmpdir()` with unique
+  names and cleanup; replay signing spawns have a 10-second timeout
+  (`RISK-BUILD-01`, partial `RISK-TIME-01`).
+- Tool ledger and workflow projections now redact secret-bearing arguments, and
+  vault/identity secret operations request permission before acting
+  (`RISK-SECRET-02` partial).
+- `debug agent --tool` now refuses ask-level permissions unless
+  `--dangerously-skip-permissions` is passed, and prints every bypass
+  (`RISK-PERM-02`).
+- Network, shell, and secret tools (`bash`, `net`, `scanner`, `http_request`,
+  `browser`, `webfetch`, `websearch`, `appsec_probe`, `vault`, `identity`,
+  `share`) now default to `ask`; the read-only explore agent keeps its explicit
+  allows (`RISK-PERM-01` partial).
+- `serve` now refuses non-loopback binds without `AXIOMSEC_SERVER_PASSWORD`,
+  and MCP OAuth callbacks bind explicitly to `127.0.0.1` (`RISK-NET-02`).
+- Operation migration now marks success only after migration completes, logs
+  failures and retries, and aggregates per-operation errors instead of
+  swallowing them (`RISK-PERSIST-03`).
+- `replay verify` now verifies minisign/cosign signatures when a public key is
+  configured and fails closed with `UNVERIFIED` otherwise; `replay show` labels
+  the signature state (`RISK-PROOF-02`).
+- `run --dangerously-skip-permissions` now prints a prominent stderr warning
+  before the session loop (`RISK-PERM-03`, accepted risk).
+- Docs/config cleanup: README documents `/init` and the registry as the tool
+  source of truth; `.oxlintrc.json` has no duplicate `options` keys and
+  `.editorconfig` matches the 120-column Prettier width (`RISK-DOC-01`,
+  `RISK-DOC-02`, `RISK-LINT-01`).
+- A boundary `ask` now issues a separate `scope` permission (default `ask`) on
+  all Guarded egress tools, so a tool-level allow can no longer silently
+  approve out-of-scope traffic (`RISK-SCOPE-02`).
+- Browser sessions are scoped by workspace + operation + TLS mode and close on
+  switch; invalid TLS certificates are rejected unless `ignore_https_errors` is
+  explicitly enabled (`RISK-NET-01`).
+- Share signing/tar, registry version checks, and installer subprocesses now
+  have explicit timeouts; SDK streaming remains intentionally unbounded and
+  requires caller cancellation (`RISK-TIME-01`).
+- The server no longer accepts `auth_token` query parameters; only the standard
+  Authorization header authenticates (`RISK-NET-03`).
+- Evidence manifest reads/appends and cyber projection appends now take a
+  shared cross-process file lock; concurrent same-content puts yield one
+  manifest entry (`RISK-PERSIST-01`).
+- Snapshot ignore checks now batch git pathspecs, fixing
+  `ENAMETOOLONG: uv_spawn` after model steps on large workspaces
+  (`RISK-SNAPSHOT-01`).
+
 ## [0.2.0] — 2026-10-21
 
 Agent harness documentation release plus a build-tooling fix. No runtime

@@ -14,187 +14,268 @@ This register documents risks; it does not fix them unless an entry is marked `f
 
 ### RISK-SCOPE-01 — Guard is per-tool, not a runtime choke point
 
-**Status:** open · **Severity:** critical · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/core/boundary/guard.ts:87-118`; call sites in `packages/axiomsec/src/tools/http-request.ts:74`, `packages/axiomsec/src/tools/webfetch.ts:43`, `packages/axiomsec/src/tools/scanner.ts:578`, `packages/axiomsec/src/tools/appsec-probe.ts:649`; no Guard import in `packages/axiomsec/src/tools/browser.ts`, `packages/axiomsec/src/tools/net.ts`, or `packages/axiomsec/src/tools/bash.ts`.
-**Why it matters:** A new or existing egress path can bypass the active operation’s boundary entirely. `bash` can reach anything the process can; `browser` and `net` can send traffic without a boundary decision.
+**Status:** fixed 2026-10-21 for `browser`/`net` (the model remains per-tool; `bash` is tracked as `RISK-SCOPE-03`) · **Severity:** critical · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/core/boundary/guard.ts:87-118`; call sites in `packages/axiomsec/src/tools/http-request.ts:74`, `packages/axiomsec/src/tools/webfetch.ts:43`, `packages/axiomsec/src/tools/scanner.ts:578`, `packages/axiomsec/src/tools/appsec-probe.ts:649`; no Guard import in `packages/axiomsec/src/tools/browser.ts`, `packages/axiomsec/src/tools/net.ts`, or `packages/axiomsec/src/tools/bash.ts`.
+**Progress 2026-10-21:** `browser` now checks an explicit URL before `ctx.ask` (`packages/axiomsec/src/tools/browser.ts:953-960`) and installs a context-level request route that aborts every HTTP(S) request whose boundary decision is not `allow` (`browser.ts:233-247`). `net` checks the host before asking or connecting (`packages/axiomsec/src/tools/net.ts:113-121`). Verified with strict scope on loopback: an in-scope page loaded while its `127.0.0.2` subresource never reached the tracker; an explicit `127.0.0.2` navigation was denied; an in-scope banner grab completed; a `127.0.0.2` TCP attempt was denied before connect.
+**Remaining:** `bash` still has no boundary check; arbitrary commands can egress. See `RISK-SCOPE-03`.
+**Why it matters:** A new or remaining egress path can bypass the active operation’s boundary entirely. `bash` can reach anything the process can.
 **Re-verify:** `rg -n "Guard\\.(check|checkUrl|checkHost|checkPath)" packages/axiomsec/src/tools` and `rg -n "fetch\\(|spawn\\(|Bun\\.spawn|playwright|net\\.connect" packages/axiomsec/src/tools`.
-**Safe check:** Read the call sites; do not generate traffic. A disposable loopback fixture is acceptable for a future fix.
+**Safe check:** Disposable loopback fixtures only; the browser check needs a local page plus a second loopback host and Chromium (`AXIOMSEC_CHROMIUM_PATH` if the Playwright revision is missing).
 **Fix direction:** Move Guard invocation into a shared execution choke point for target-touching tools, or require every such tool to call it and add a static check.
-**Related:** `SEC-01`, `SEC-02`, `V-S3`.
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-02`, `RISK-SCOPE-03`, `V-S3`.
+
+### RISK-SCOPE-03 — `bash` can egress without a boundary decision
+
+**Status:** accepted (ask-by-default mitigation; no boundary enforcement) · **Severity:** high · **Verified:** 2026-10-21
+**Evidence:** `packages/axiomsec/src/tools/bash.ts` imports no `Guard`; `BashTool.ask` scans command patterns and external directories (`bash.ts:262-282`) but never checks the operation boundary. A command can resolve DNS or open sockets to any host.
+**Why it matters:** One unguarded shell path defeats the boundary for any target the process can reach, including third-party hosts and internal networks.
+**Mitigation:** `bash` now resolves to `ask` by default (`agent.ts:113`), so an operation-attached shell command prompts; non-interactive `run` auto-rejects asks unless `--dangerously-skip-permissions` is used (`RISK-PERM-03`). An operator who approves a command can still egress anywhere.
+**Re-verify:** `rg -n "Guard" packages/axiomsec/src/tools/bash.ts` (expect no matches); inspect the `ask` function and the default rule.
+**Safe check:** Read-only; do not use an unguarded shell against a real target.
+**Fix direction:** Enforce scope in a shared execution choke point (sandbox/proxy/network namespace). Do not rely on scraping URLs out of arbitrary commands.
+**Related:** `RISK-SCOPE-01`, `RISK-SCOPE-02`, `RISK-PERM-01`, `RISK-PERM-03`, `V-S3`.
 
 ### RISK-SCOPE-02 — Boundary `ask` is not an independent approval
 
-**Status:** open · **Severity:** critical · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/core/boundary/guard.ts:89` (no active op → allow), `:103-117` (`ask` is returned, only `deny` throws); callers record `scope.mode` then call their own `ctx.ask` (`packages/axiomsec/src/tools/http-request.ts:73-92`, `packages/axiomsec/src/tools/scanner.ts:577-596`).
-**Why it matters:** A request that is outside `in_scope` but not explicitly `out_of_scope` yields `ask`. The tool’s own permission may be auto-allowed by the built-in `"*": "allow"` default, so the boundary `ask` never becomes a human decision. With no active operation, the guard allows everything.
-**Re-verify:** `sed -n '87,118p' packages/axiomsec/src/core/boundary/guard.ts` and `sed -n '73,92p' packages/axiomsec/src/tools/http-request.ts`.
-**Safe check:** Create a disposable loopback operation with a boundary `default: ask`; call `Guard.check` directly and observe `mode: ask`. Do not contact a third-party host.
-**Fix direction:** Treat boundary `ask` as an explicit permission request (or deny), not metadata; require an active operation for target-touching tools.
-**Related:** `SEC-01`, `SEC-03`, `RISK-PERM-01`, `V-S3`.
+**Status:** fixed 2026-10-21 · **Severity:** critical · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/core/boundary/guard.ts:89` (no active op → allow), `:103-117` (`ask` returned, only `deny` threw); callers recorded `scope.mode` and called their own `ctx.ask`, which the permission rules could resolve to allow.
+**Why it matters:** A request outside `in_scope` but not explicitly `out_of_scope` yields `ask`. If the tool permission was allowed, the boundary `ask` never became a human decision, and an auto-approving caller could execute without one.
+**Fix:** `packages/axiomsec/src/core/boundary/guard.ts:132-145` adds `approvalRequest`. The Guarded egress tools now issue a separate `scope` ask whenever the boundary returns `ask`: `http_request.ts:79-81`, `webfetch.ts:47-49`, `scanner.ts:585-587`, `appsec-probe.ts:652-654`, `net.ts:119-121`, `browser.ts:961-963`. `agent.ts:124` defaults `scope` to `ask`.
+**Reproduction:** with opsec normal and only `127.0.0.1` in scope, `net`, `http_request`, and `browser` to `127.0.0.2` all refused without `--dangerously-skip-permissions` with “permission 'scope' resolves to ask”; in-scope `net` skipped the scope ask and only requested `net`.
+**Residual:** an operator can explicitly configure `scope: allow` (that is an informed override); browser subresource requests that resolve to `ask` are aborted by the route guard rather than prompted; `bash` remains outside the boundary (`RISK-SCOPE-03`).
+**Re-verify:** `VERIFICATION.md` §V-S3.
+**Related:** `SEC-01`, `SEC-03`, `RISK-PERM-01`, `RISK-SCOPE-01`, `RISK-SCOPE-03`, `V-S3`.
 
 ### RISK-PERM-01 — Built-in permission defaults are allow-all
 
-**Status:** open · **Severity:** critical · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/agent/agent.ts:110-127` (`"*": "allow"`), explicit asks only for `http_request`/`browser` at `:143-144`, `:166-167`, `:189-190`, `:213-214`, `:248-249`; `packages/axiomsec/src/permissions/evaluate.ts:9-15` (last match, default `ask` only when no rule matches); `packages/axiomsec/src/tools/vault.ts:59-74` (reveal without ask); `packages/axiomsec/src/tools/scanner.ts:585-596`, `packages/axiomsec/src/tools/net.ts:111-112`, `packages/axiomsec/src/tools/bash.ts:267-277` (asks whose default rule is allow).
-**Why it matters:** Most built-in tools execute without a prompt under the default agent configuration. The `.env` protection exists only in the `read` rules; `bash` can read the same file. This is the difference between a permission system and a logging system.
-**Re-verify:** `sed -n '110,127p' packages/axiomsec/src/agent/agent.ts`; `sed -n '9,15p' packages/axiomsec/src/permissions/evaluate.ts`; `rg -n "ctx\\.ask" packages/axiomsec/src/tools/{scanner,webfetch,net,bash,vault,identity}.ts`.
-**Safe check:** Rule inspection only. Do not run `vault get --reveal` or network tools on a real workspace.
-**Fix direction:** Default to ask for network/shell/secret tools; add explicit denies/asks per agent; make `.env` protection tool-independent.
-**Related:** `SEC-03`, `RISK-SCOPE-02`, `RISK-PERM-02`, `V-S3`.
+**Status:** fixed 2026-10-21 (network/shell/secret classes) · **Severity:** critical · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/agent/agent.ts:110-127` (`"*": "allow"`), explicit asks only for `http_request`/`browser`; `packages/axiomsec/src/permissions/evaluate.ts:9-15` (last match, default `ask` only when no rule matches); `packages/axiomsec/src/tools/vault.ts:59-74` (reveal without ask); `packages/axiomsec/src/tools/scanner.ts:585-596`, `packages/axiomsec/src/tools/net.ts:111-112`, `packages/axiomsec/src/tools/bash.ts:267-277` (asks whose default rule was allow).
+**Why it matters:** Most built-in tools executed without a prompt under the default agent configuration, including network, shell, and secret access.
+**Fix:** `packages/axiomsec/src/agent/agent.ts:110-127` now defaults `bash`, `net`, `scanner`, `http_request`, `browser`, `webfetch`, `websearch`, `appsec_probe`, `vault`, `identity`, `share`, and `scope` to `ask`; last-match evaluation makes those asks win. Verified with the `security` agent: `vault set`, `bash`, `net`, and `http_request` refuse without `--dangerously-skip-permissions` and run with it; `scope` still runs without the flag. The read-only `explore` agent keeps explicit allows.
+**Residual:** non-network/non-secret tools (notably `edit`/`write`/`read` except `.env`, task/play/runbook) still resolve to `"*": "allow"`; this is tracked as `RISK-PERM-04`. User config can override any ask.
+**Re-verify:** `sed -n '110,132p' packages/axiomsec/src/agent/agent.ts`; run a sensitive tool with `debug agent` with and without the flag (`VERIFICATION.md` §V-S3).
+**Safe check:** Disposable workspace and canaries only.
+**Related:** `SEC-03`, `RISK-SCOPE-02`, `RISK-PERM-02`, `RISK-PERM-03`, `RISK-PERM-04`, `V-S3`.
 
 ### RISK-PROOF-01 — Finding promotion trusts arbitrary evidence refs
 
-**Status:** open · **Severity:** critical · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/tools/finding.ts:24-36` (`evidence: string[]`), `:245-309` (refs accepted, only length checked), `packages/axiomsec/src/core/cyber/oracle.ts:77-83` (non-empty refs satisfy the evidence gate), `packages/axiomsec/src/core/cyber/finding.ts:189-194` (reportable predicate).
-**Why it matters:** A finding can be promoted as `verified`/reportable with fabricated 64-hex strings and a replay string, because the oracle does not resolve the refs to evidence files or compare hashes. That defeats the proof-first design.
-**Re-verify:** `sed -n '24,36p;245,309p' packages/axiomsec/src/tools/finding.ts`; `sed -n '66,90p' packages/axiomsec/src/core/cyber/oracle.ts`.
-**Safe check:** On a disposable operation, promote a finding with a fabricated hash and a short replay string, then inspect `finding status`. Never use real evidence.
-**Fix direction:** Resolve every ref through `Evidence.get`, verify the manifest entry and bytes, and reject unknown refs before the oracle.
+**Status:** fixed 2026-10-21 · **Severity:** critical · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/finding.ts:24-36` (`evidence: string[]`), `:245-309` (refs accepted, only length checked), `packages/axiomsec/src/core/cyber/oracle.ts:77-83` (non-empty refs satisfy the evidence gate), `packages/axiomsec/src/core/cyber/finding.ts:189-194` (reportable predicate).
+**Why it matters:** A finding could be promoted as `verified`/reportable with fabricated 64-hex strings and a replay string, because the oracle did not resolve the refs to evidence files or compare hashes. That defeats the proof-first design.
+**Fix:** `packages/axiomsec/src/core/evidence/store.ts:65-72` adds `verify`, which resolves the manifest entry and re-hashes the stored bytes against the requested digest. `packages/axiomsec/src/tools/finding.ts:266-283` verifies every supplied and inherited evidence ref before the replay artifact is written or the oracle runs, rejecting promotion with `unresolved_evidence` when any ref is unknown or corrupt.
+**Reproduction (pre-fix):** promoting `fabricated-finding` with a fabricated `aaaa…` ref returned `status: verified`, `oracle: passed`.
+**Re-verify:** run the negative/positive/tamper cases in `VERIFICATION.md` §V-S4. A fabricated ref must be rejected and `finding status` must report `found: false`; a real ref must promote; a tampered artifact must be rejected.
 **Related:** `SEC-04`, `SEC-05`, `V-S4`.
 
 ### RISK-SECRET-01 — Share redaction is narrow
 
-**Status:** open · **Severity:** critical · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/tools/share.ts:41` (`REDACT_EXTS` is only `.md`, `.txt`, `.json`, `.log`, `.yml`, `.yaml`, `.csv`), `:54-60` (applies `redactString`), `:141-168` (copies evidence/cyber/workflow/context and redacts staged files); `packages/axiomsec/src/core/replay/redact.ts:13-20` (JWT-only string redaction); `packages/axiomsec/src/tools/http-request.ts:159-196` (evidence stores merged headers, cookies, body).
-**Why it matters:** A share bundle can include `.jsonl` ledger/fact projections, `.har`/`.html` evidence, and JSON containing Authorization/Cookie/API-key values. Redaction removes JWTs and selected text, not structure-aware secrets.
-**Re-verify:** `sed -n '41,60p;141,168p' packages/axiomsec/src/tools/share.ts`; `sed -n '13,39p' packages/axiomsec/src/core/replay/redact.ts`.
-**Safe check:** Put a canary `Authorization: Bearer canary-...` in a disposable evidence JSON/HAR, build a share bundle with redaction on, and grep the tarball. No real secrets.
-**Fix direction:** Apply structured `redactValue` to JSON/JSONL, expand the extension set, and redact evidence at capture time (or at least on copy).
+**Status:** fixed 2026-10-21 · **Severity:** critical · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/share.ts:41` (`REDACT_EXTS` was only `.md`, `.txt`, `.json`, `.log`, `.yml`, `.yaml`, `.csv`), `:54-60` (applied `redactString`), `:141-168` (copied evidence/cyber/workflow/context and redacted staged files); `packages/axiomsec/src/core/replay/redact.ts:13-20` (JWT-only string redaction); `packages/axiomsec/src/tools/http-request.ts:159-196` (evidence stores merged headers, cookies, body).
+**Why it matters:** A share bundle could include `.jsonl` ledger/fact projections, `.har`/`.html` evidence, and JSON containing Authorization/Cookie/API-key values. Redaction removed JWTs and selected text, not structure-aware secrets.
+**Fix:** `packages/axiomsec/src/core/replay/redact.ts:13-70` now redacts JWTs, Authorization/Proxy-Authorization/Cookie/Set-Cookie headers, quoted and unquoted secret assignments, and header-pair objects (`{name,value}`) such as HAR headers. `packages/axiomsec/src/tools/share.ts:41-99` parses JSON/JSONL/HAR/NDJSON and applies `redactValue`; the text extension set now includes JSONL, HAR, HTML, XML, and TSV. `share.ts:215-216` redacts the entire staged tree before hashing.
+**Residual:** binary artifacts, extensionless files, positional CSV values, and bare opaque strings with no key/header pattern are not content-scanned (`RISK-SECRET-03`); tool args and agent output are still ledgered (`RISK-SECRET-02`, fixed for structured secrets), so never put real credentials in a disposable-proof workflow.
+**Reproduction:** canaries in text (`Authorization`, `Cookie`, `api_key`) and JSON (HAR header, `api_key`, nested `password`) survived pre-fix. Post-fix `tar -xOzf` found zero canaries, the redacted JSON stayed parseable, and all bundle manifest hashes matched.
+**Re-verify:** `VERIFICATION.md` §V-S6; build with `redact:true`, then `redact:false` as a control.
 **Related:** `SEC-06`, `RISK-SECRET-02`, `V-S6`.
 
 ## High
 
 ### RISK-PERM-02 — `debug agent` turns `ask` into allow
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/cli/cmd/debug/agent.ts:181-190` — the synthetic context’s `ask` throws only for an explicit `deny`; `allow` and `ask` both proceed.
-**Why it matters:** It is a useful tool smoke-test, but dangerous on a real workspace or target: the operator sees no prompt.
-**Re-verify:** `sed -n '181,190p' packages/axiomsec/src/cli/cmd/debug/agent.ts`.
-**Safe check:** Run only read-only tools (`scope`, `workspace`) on a disposable workspace; never on a real target.
-**Fix direction:** Make `debug agent` require an explicit `--dangerously-skip-permissions` for ask-level tools, or print the bypassed asks.
-**Related:** `SEC-03`, `RISK-PERM-01`, `V-S3`.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/debug/agent.ts:181-190` — the synthetic context’s `ask` threw only for an explicit `deny`; `allow` and `ask` both proceeded silently.
+**Why it matters:** It is a useful tool smoke-test, but dangerous on a real workspace or target: the operator saw no prompt and no warning.
+**Fix:** `packages/axiomsec/src/cli/cmd/debug/agent.ts:35-38,190-200` adds `--dangerously-skip-permissions`. Ask-level tools now fail closed with an explanatory error unless the flag is passed; with the flag, every bypass is printed to stderr.
+**Reproduction:** post-fix, `debug agent security --tool http_request` against a loopback fixture exited 1 with “resolves to ask; re-run with --dangerously-skip-permissions”; with the flag it printed the bypass line and returned HTTP 200. A non-ask tool (`scope`) still ran without the flag.
+**Re-verify:** repeat the two commands in `VERIFICATION.md` §V-S3.
+**Safe check:** Disposable loopback workspace only; the flag is not a production permission.
+**Fix direction:** Keep the flag test-only; do not wire it into normal sessions.
+**Related:** `SEC-03`, `RISK-PERM-01`, `RISK-PERM-03`, `V-S3`.
 
 ### RISK-PERM-03 — `run --dangerously-skip-permissions` auto-approves
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
+**Status:** accepted (banner added 2026-10-21) · **Severity:** high · **Verified:** 2026-10-21
 **Evidence:** `packages/axiomsec/src/cli/cmd/run.ts:544-548` replies `once` to every `permission.asked`; without the flag it auto-rejects (`:549-558`).
 **Why it matters:** A non-interactive run with this flag can execute any side-effecting tool the model chooses, subject only to explicit deny rules and Guard coverage.
-**Re-verify:** `sed -n '535,560p' packages/axiomsec/src/cli/cmd/run.ts`.
+**Mitigation:** `packages/axiomsec/src/cli/cmd/run.ts:412-420` prints a prominent stderr banner before the session loop when the flag is set. The flag remains intentionally dangerous and is documented in `AGENTS.md`.
+**Re-verify:** `sed -n '535,560p' packages/axiomsec/src/cli/cmd/run.ts`; inspect the banner at `:412-420`.
 **Safe check:** Read-only inspection; do not run it against a real workspace.
-**Fix direction:** Restrict the flag to disposable workspaces, print a prominent banner, and never combine with real credentials.
-**Related:** `SEC-03`, `V-S3`.
+**Fix direction:** If stronger containment is required, require an additional environment opt-in or a disposable-workspace marker.
+**Related:** `SEC-03`, `RISK-PERM-01`, `V-S3`.
 
 ### RISK-PROOF-02 — Replay signatures are produced but not verified
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/cli/cmd/replay.ts:93-113` — `verify` checks `sha256_body`; if signed, it prints “verification not yet implemented”.
-**Why it matters:** A signature in a replay trailer creates false assurance. Integrity is body-hash only; provenance is not established.
-**Re-verify:** `sed -n '93,113p' packages/axiomsec/src/cli/cmd/replay.ts`.
-**Safe check:** Read the command; use `replay verify` on a disposable replay and observe the message.
-**Fix direction:** Implement minisign/cosign verification or label signatures as unverified in `show`/`verify` and reports.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/replay.ts:93-113` — `verify` checked `sha256_body`; if signed, it printed “verification not yet implemented”.
+**Why it matters:** A signature in a replay trailer created false assurance. Integrity was body-hash only; provenance was not established.
+**Fix:** `packages/axiomsec/src/cli/cmd/replay.ts:130-167` verifies minisign and cosign signatures when the corresponding public key is configured (`AXIOMSEC_MINISIGN_PUBKEY`, `COSIGN_PUBKEY`) and the tool is on PATH. Signed but unverifiable replays now print `UNVERIFIED` and exit 1; `show` labels the signature state. Unsigned replays still exit 0.
+**Reproduction:** a synthetic signed trailer without a configured key returns exit 1 with “set AXIOMSEC_MINISIGN_PUBKEY”; the unsigned replay returns exit 0 with `signature: none`.
+**Residual:** verification requires an operator-provided public key; `public_key_id` is not cross-checked; cosign verification is key-based with tlog verification disabled (`--insecure-ignore-tlog=true`).
+**Re-verify:** `VERIFICATION.md` §V-S7.
 **Related:** `SEC-05`, `V-S7`.
 
-### RISK-SECRET-02 — Tool args are ledgered; vault reveal has no ask
+### RISK-SECRET-02 — Tool args are ledgered; vault reveal is ungated
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/tools/tool.ts:247-259` (`tool.called` data includes `input: args`); `packages/axiomsec/src/tools/vault.ts:59-74` (`get --reveal` returns the value; no `ctx.ask`), `:38-56` (`set` writes the value); `packages/axiomsec/src/core/vault.ts:45-49` (plaintext JSON, 0600).
-**Why it matters:** `vault set`, `identity add`, `http_request` headers/cookies, and similar arguments can persist secrets in SQLite/JSONL and later in share bundles. The vault is not encrypted at rest, and reveal is not gated.
-**Re-verify:** `sed -n '247,259p' packages/axiomsec/src/tools/tool.ts`; `sed -n '28,74p' packages/axiomsec/src/tools/vault.ts`; `sed -n '45,49p' packages/axiomsec/src/core/vault.ts`.
-**Safe check:** Use a canary value in a disposable operation; inspect the ledger; do not set a real secret.
-**Fix direction:** Add arg redaction for secret-bearing tools before ledgering, add `ctx.ask` to vault reveal/set, and consider OS keychain integration.
-**Related:** `SEC-06`, `RISK-SECRET-01`, `V-S4`.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/tool.ts:247-259` (`tool.called` data included raw `input: args`); `packages/axiomsec/src/tools/vault.ts:59-74` (`get --reveal` returned the value with no `ctx.ask`), `:38-56` (`set` wrote the value); `packages/axiomsec/src/core/vault.ts:45-49` (plaintext JSON, 0600).
+**Progress 2026-10-21:** `packages/axiomsec/src/tools/tool.ts:108-121,274` now applies structured `redactValue` plus per-tool secret fields (`vault`/`identity` `value`) before writing `tool.called` and workflow `last_args`. `vault.ts:41,71,103,162` asks before set, reveal, delete, and use_as; `identity.ts:94,150,206` asks before add, use, and clear; both permissions default to `ask` (`agent.ts:121-122`). Verified with canaries: `vault set` / `get --reveal` / `identity add` still work, the ledger contains zero canary occurrences, and inputs read `[redacted:secret:value]`.
+**Residual:** request bodies, `net` payloads, and arbitrary nested values are not structurally redacted; revealed output remains in the session transcript by design; the vault is plaintext JSON at 0600. These are tracked as `RISK-SECRET-03`.
+**Re-verify:** `rg -n "redactToolInput|permission: \"vault\"|permission: \"identity\"" packages/axiomsec/src/tools/{tool,vault,identity}.ts`; in a disposable operation set a canary vault value and grep the ledger.
+**Safe check:** Canary values only; never store real credentials.
+**Related:** `SEC-03`, `SEC-06`, `RISK-SECRET-01`, `RISK-SECRET-03`, `RISK-PERM-01`, `V-S3`, `V-S4`.
 
 ### RISK-NET-01 — Browser state is global and TLS errors are ignored
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/tools/browser.ts:80-81` (module-level `sessions` Map + counter), `:137-140` (`ensure` reuses sessions), `:220` (`ignoreHTTPSErrors: true`).
-**Why it matters:** Cookies/localStorage/headers/console buffers can persist across sessions and operations; unconditional TLS bypass makes a MITM invisible.
-**Re-verify:** `sed -n '80,81p;137,140p;220p' packages/axiomsec/src/tools/browser.ts`.
-**Safe check:** Read the code; do not launch a browser against a real target.
-**Fix direction:** Scope browser contexts to `Instance`/operation and abort; make TLS bypass explicit and opt-in.
-**Related:** `ENG-01`, `SEC-01`, `V-S3`.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/browser.ts:80-81` (module-level `sessions` Map + counter), `:137-140` (`ensure` reused one session), `:220` (`ignoreHTTPSErrors: true`).
+**Why it matters:** Cookies/localStorage/headers/console buffers could persist across sessions and operations; unconditional TLS bypass made a MITM invisible.
+**Fix:** `packages/axiomsec/src/tools/browser.ts:143-149` keys sessions by workspace, operation slug, and TLS mode, and closes every session with a different key. `:53` adds `ignore_https_errors` (default false), `:230` applies it to `newContext`, and `:692-693` builds the session key from the active boundary.
+**Reproduction:** a self-signed loopback HTTPS page fails with `ERR_CERT_AUTHORITY_INVALID` by default and loads with `ignore_https_errors: true`. Cross-operation session reuse is prevented by the key/close path; it was code-verified, not exercised in one long-lived process.
+**Residual:** the session registry is still a process-level Map (one active browser per operation, closed on switch) rather than `InstanceState`; browser requests that resolve to boundary `ask` are aborted rather than prompted.
+**Re-verify:** `VERIFICATION.md` §V-S3 TLS check; inspect the session key and close loop.
+**Related:** `ENG-01`, `SEC-01`, `RISK-NET-02`, `V-S3`.
 
 ### RISK-NET-02 — Server auth is optional; OAuth callback binds all interfaces
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/server/middleware.ts:39-49` (no password → pass; `auth_token` query accepted), `packages/axiomsec/src/cli/cmd/serve.ts:11-12` (warning only), `packages/axiomsec/src/cli/network.ts:11-15` (loopback default, overridable), `packages/axiomsec/src/mcp/oauth-callback.ts:187` (`listen(currentPort)` without host).
-**Why it matters:** A `--hostname 0.0.0.0` server without a password is an unauthenticated remote control surface. The OAuth callback may listen on all interfaces despite a 127.0.0.1 redirect.
-**Re-verify:** `sed -n '39,49p' packages/axiomsec/src/server/middleware.ts`; `sed -n '185,188p' packages/axiomsec/src/mcp/oauth-callback.ts`.
-**Safe check:** Start on loopback only; curl with and without `AXIOMSEC_SERVER_PASSWORD`; do not expose the port.
-**Fix direction:** Require a password (or a one-time token) for non-loopback binds, bind OAuth to 127.0.0.1, and drop `auth_token` from URLs.
-**Related:** `SEC-07`, `V-S5`.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/server/middleware.ts:39-49` (no password → pass), `packages/axiomsec/src/cli/cmd/serve.ts:11-12` (warning only), `packages/axiomsec/src/cli/network.ts:11-15` (loopback default, overridable), `packages/axiomsec/src/mcp/oauth-callback.ts:187` (`listen(currentPort)` without host).
+**Why it matters:** A `--hostname 0.0.0.0` server without a password was an unauthenticated remote control surface. The OAuth callback could listen on all interfaces despite a 127.0.0.1 redirect.
+**Fix:** `packages/axiomsec/src/cli/cmd/serve.ts:11-18,29-33` refuses any non-loopback bind without `AXIOMSEC_SERVER_PASSWORD` before listening; loopback without a password still warns. `packages/axiomsec/src/mcp/oauth-callback.ts:187` binds the callback explicitly to `127.0.0.1`.
+**Reproduction:** post-fix, `serve --hostname 0.0.0.0` without a password exits 1 with a clear error and no port opens; `serve --hostname 127.0.0.1` without a password prints the warning and returns 200; with a password, unauthenticated requests return 401.
+**Residual:** loopback without a password remains reachable by local processes; this is a deliberate warning, not an auth boundary. Tokens in URLs are tracked separately (`RISK-NET-03`).
+**Re-verify:** `VERIFICATION.md` §V-S5.
+**Related:** `SEC-07`, `RISK-NET-03`, `V-S5`.
 
 ### RISK-PATH-01 — Path containment is lexical
 
-**Status:** needs-verify · **Severity:** high · **Verified:** 2026-10-21 (code), impact not reproduced
-**Evidence:** `packages/axiomsec/src/support/filesystem.ts:123-125` (`contains` uses `relative()`), `packages/axiomsec/src/project/instance.ts:94-102` (`containsPath` uses it); `packages/axiomsec/src/tools/external-directory.ts` checks the unresolved target.
-**Why it matters:** A symlink or junction inside the workspace can point outside it; a lexical check would still consider it contained, bypassing the external-directory prompt.
-**Re-verify:** `sed -n '123,125p' packages/axiomsec/src/support/filesystem.ts`; `sed -n '89,102p' packages/axiomsec/src/project/instance.ts`.
-**Safe check:** In a disposable temp dir, create a symlink to another temp dir and call `contains`; no sensitive files.
-**Fix direction:** Canonicalize with `realpath` before containment; handle Windows junctions and case-insensitivity.
-**Related:** `ENG-06`, `V-S3`.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/support/filesystem.ts:123-125` (`contains` used `relative()` lexically), `packages/shared/src/filesystem.ts:227-231` (same check on the `Instance.containsPath` path), `packages/axiomsec/src/project/instance.ts:94-102`, and `packages/axiomsec/src/tools/external-directory.ts` checked the unresolved target.
+**Why it matters:** A symlink or junction inside the workspace could point outside it; the lexical check still reported it as contained, bypassing the external-directory prompt.
+**Fix:** `packages/shared/src/filesystem.ts:227-247` and `packages/axiomsec/src/support/filesystem.ts:123-143` canonicalize both paths with `realpathSync.native` before `relative()`, resolving the nearest existing ancestor for paths that do not exist yet. Containment now rejects `..`, `..<sep>`, different drives, and symlink/junction escapes.
+**Reproduction:** pre-fix, `contains(parent, parent/link/secret.txt)` returned true for a junction to an outside directory. Post-fix: inside=true, outside=false, junction escape=false, nonexistent-child=true, sibling-prefix=false, self=true.
+**Re-verify:** `VERIFICATION.md` §V-S9.
+**Related:** `ENG-06`, `RISK-BUILD-01`, `V-S3`.
 
 ### RISK-PERSIST-02 — Operation slug collision can clobber state
 
-**Status:** open · **Severity:** high · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/core/operation/operation.ts:182-187` (minute-precision suffix), `:355-362` (initial facts/ledger/relations written with `writeFile`), `:400-420` (`create` writes the operation dir).
-**Why it matters:** Two operations with the same label in the same minute can resolve to the same slug. The second create overwrites the initial projections and upserts the same DB rows, losing the first operation’s initial state.
-**Re-verify:** `sed -n '182,187p;355,362p;400,420p' packages/axiomsec/src/core/operation/operation.ts`.
-**Safe check:** Create two same-label operations in a disposable workspace within one minute; inspect directories. Do not do this in a real workspace.
-**Fix direction:** Use a collision-proof unique ID (ULID) or retry with a random suffix; fail if the directory exists.
+**Status:** fixed 2026-10-21 · **Severity:** high · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/core/operation/operation.ts:182-187` (minute-precision suffix after a non-atomic `existsSync` check), `:355-362` (initial facts/ledger/relations written with `writeFile`), `:400-420` (`create` wrote into the resolved directory).
+**Why it matters:** Repeated or concurrent creates with the same label could resolve to the same slug; later writes overwrite the initial projections and upsert the same DB rows, losing the earlier operation’s initial state.
+**Fix:** `packages/axiomsec/src/core/operation/operation.ts:182-207` now reserves a slug with an atomic non-recursive `mkdir`, trying the base slug, a minute-stamped slug, then random suffixes; it fails after 100 collisions. `create` uses the reserved directory (`operation.ts:427`). The legacy store uses the same atomic reservation (`store.ts:85-99`).
+**Reproduction:** pre-fix, a third same-label create in one minute reused the minute-stamped slug. Post-fix, three sequential creates produced `collision`, `collision-<stamp>`, and `collision-<stamp>-<rand>`, and the first operation’s `cyber/{ledger,facts,relations}.jsonl` remained intact.
+**Re-verify:** in a disposable workspace, run `operation new "Collision"` three times and confirm three distinct slugs and directories.
 **Related:** `ENG-02`, `V-S2`.
 
 ## Medium
 
-### RISK-PERSIST-01 — Unlocked JSONL and manifest appends
+### RISK-NET-03 — Server accepts auth tokens in URLs
+
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/server/middleware.ts:43-45` copied an `auth_token` query parameter into the Authorization header; the experimental HTTP API did the same in `server/instance/httpapi/server.ts`.
+**Why it matters:** URLs are commonly retained in browser history, proxy logs, and referrers, so a token in a URL can leak outside request headers.
+**Fix:** `packages/axiomsec/src/server/middleware.ts:39-47` and `server/instance/httpapi/server.ts` no longer read `auth_token`; only a standard `Authorization` header authenticates. The query schema still supports `directory`/`workspace`.
+**Reproduction:** with `AXIOMSEC_SERVER_PASSWORD=canary`, `/config?auth_token=YXhpb21zZWM6Y2FuYXJ5` returns 401, Basic auth returns 200, and no auth returns 401.
+**Re-verify:** `rg -n "auth_token" packages/axiomsec/src/server` (expect none); repeat the three requests in `VERIFICATION.md` §V-S5.
+**Safe check:** Loopback only, canary password.
+**Related:** `SEC-07`, `RISK-NET-02`, `V-S5`.
+
+### RISK-PERM-04 — Workspace-write and workflow tools default to allow
+
+**Status:** accepted · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence:** `packages/axiomsec/src/agent/agent.ts:110-127` keeps `"*": "allow"` for tools outside the sensitive set; `edit`/`write`/`apply_patch` map to the `edit` permission, and `task`/`play`/`runbook`/`workspace` have no default ask. Their `ctx.ask` calls resolve to allow.
+**Why it matters:** An operation-attached model can modify files or advance workflows without a prompt under the default ruleset, even though network/shell/secret tools now ask.
+**Mitigation:** `external_directory` still asks outside the workspace; edit tools call `ctx.ask`; users can set `"edit": "ask"` or narrower rules. This is an intentional autonomy tradeoff for the primary coding/research agents.
+**Re-verify:** `sed -n '110,130p' packages/axiomsec/src/agent/agent.ts`; run `debug agent security --tool write` on a disposable workspace and observe the resolved rule.
+**Safe check:** Disposable workspace only.
+**Fix direction:** Consider `edit: "ask"` by default for operation-attached agents, or require an explicit workspace marker for non-interactive runs.
+**Related:** `SEC-03`, `RISK-PERM-01`, `RISK-PERM-03`, `V-S3`.
+
+### RISK-SECRET-03 — Vault is plaintext and request bodies are not redacted
 
 **Status:** open · **Severity:** medium · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/core/evidence/store.ts:89-102` (read manifest, then append; no lock), `packages/axiomsec/src/core/cyber/cyber.ts:489` (append to projection); the legacy operation store explicitly documents no multi-writer semantics (`packages/axiomsec/src/core/operation/store.ts:9-10`).
-**Why it matters:** Two processes can append duplicate manifest entries or interleave JSONL lines; evidence reads may see a torn state.
-**Re-verify:** `sed -n '89,102p' packages/axiomsec/src/core/evidence/store.ts`; `sed -n '485,492p' packages/axiomsec/src/core/cyber/cyber.ts`.
-**Safe check:** Two concurrent writers against a disposable evidence store; inspect the manifest.
-**Fix direction:** Use file locks (`Flock`/`effect-flock`) or a single SQLite manifest; make appends atomic.
+**Evidence:** `packages/axiomsec/src/core/vault.ts:45-49` stores secrets as plaintext JSON at 0600; `packages/axiomsec/src/tools/http-request.ts` accepts arbitrary request bodies, and `packages/axiomsec/src/tools/net.ts` accepts arbitrary payloads. `redactToolInput` covers key-based secrets and recognizable text patterns, but not bare opaque values.
+**Reproduction:** a text evidence artifact containing only `LOCK-CANARY-EVIDENCE` (no header or key) appeared twice in a share bundle built with `redact:true`. The earlier header/JSON canaries were removed, so this is specifically the opaque-value residual.
+**Why it matters:** A bare credential placed in a body, payload, or evidence text can reach the ledger, evidence, or a share bundle even though headers and named secret fields are redacted. The vault protects only by filesystem mode.
+**Re-verify:** set a canary vault value and inspect the vault file mode; add a bare canary text artifact, build a share with `redact:true`, and grep the tarball.
+**Safe check:** Canary values, disposable loopback only.
+**Fix direction:** Encrypt or keychain-back the vault; avoid ledgering bodies by default; warn when redaction is enabled but cannot classify opaque content.
+**Related:** `SEC-06`, `RISK-SECRET-01`, `RISK-SECRET-02`, `V-S3`, `V-S4`, `V-S6`.
+
+### RISK-PERSIST-01 — Unlocked JSONL and manifest appends
+
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/core/evidence/store.ts:89-102` (read manifest, then append; no lock), `packages/axiomsec/src/core/cyber/cyber.ts:489` (append to projection); the legacy operation store documents no multi-writer semantics (`packages/axiomsec/src/core/operation/store.ts:9-10`).
+**Why it matters:** Two processes could append duplicate manifest entries or interleave JSONL lines; evidence reads could see a torn state.
+**Fix:** `packages/axiomsec/src/support/lock.ts:1-7` wraps the shared `Flock` with a 30-second timeout and a graceful fallback when the lock directory is not configured. `evidence/store.ts:52-70,103-119` locks manifest reads and the read/append critical section; `cyber.ts:490-492` locks projection appends.
+**Reproduction:** eight concurrent puts of the same canary produced **1** manifest line with the lock; the unlocked control produced **3**. The locked case was run with `Flock.setGlobal` in a disposable state directory.
+**Residual:** module-level callers without a configured `Flock` global run unlocked (fallback); external processes that read the JSONL files directly (outside `Evidence.list`/`get`) can still observe a partial last line.
+**Re-verify:** `VERIFICATION.md` §V-S10.
 **Related:** `ENG-02`, `SEC-04`, `V-S4`.
 
 ### RISK-PERSIST-03 — Migration failure is swallowed for the process lifetime
 
-**Status:** open · **Severity:** medium · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/src/core/operation/operation.ts:26-31` — the workspace is added to `migrated` before `migrate()` runs, and the error is discarded.
-**Why it matters:** A transient failure leaves the workspace unmigrated with no retry until process restart; the UI may appear healthy while projections are missing.
-**Re-verify:** `sed -n '26,32p' packages/axiomsec/src/core/operation/operation.ts`.
-**Safe check:** Code read; for a runtime check, use a disposable workspace and an unwritable legacy path.
-**Fix direction:** Mark after success, log the failure, and retry or surface a visible warning.
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/core/operation/operation.ts:26-31` — the workspace was added to `migrated` before `migrate()` ran, and the error was discarded; `packages/axiomsec/src/core/operation/migration.ts:73-80` also swallowed per-operation failures.
+**Why it matters:** A transient failure left the workspace unmigrated with no retry until process restart; the UI could appear healthy while projections were missing.
+**Fix:** `packages/axiomsec/src/core/operation/operation.ts:27-46` marks the workspace only after a successful migration, logs a warning once per workspace, and retries on the next access. `packages/axiomsec/src/core/operation/migration.ts:73-86` collects per-operation failures and throws an aggregate error instead of discarding them.
+**Reproduction:** the legacy migration happy path still works: a fixture with `events.jsonl` gains `_legacy/events.jsonl` and a migrated `axiomsec.md`, and `operation list` shows the migrated operation. Failure injection was not run; the retry/log path is code-verified.
+**Re-verify:** create the fixture in `VERIFICATION.md` §V-S2 and inspect the migrated files; review the `ensureMigrated` retry path.
 **Related:** `ENG-07`, `V-S2`.
+
+### RISK-TOOL-01 — `debug agent --tool` never executed the tool
+
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/debug/agent.ts:60` awaited `tool.execute(params, ctx)`, but tool definitions return `Effect.Effect<ExecuteResult>` (`packages/axiomsec/src/tools/tool.ts:47-56`). The command printed the effect object (`{"_id":"Effect","op":"WithFiber"}`) and exited 0 without running the tool.
+**Why it matters:** The documented `V-S3`/`V-S4` verification path silently verified nothing; operators could believe a tool smoke test passed when no tool code ran.
+**Fix:** `packages/axiomsec/src/cli/cmd/debug/agent.ts:60` now runs the effect through `AppRuntime.runPromise` before printing the result.
+**Re-verify:** with a configured model in a disposable workspace, run `debug agent security --tool scope --params '{"action":"status"}'`; the output must be the tool result, not an Effect object.
+**Safe check:** Disposable workspace only; ask-level tools require `--dangerously-skip-permissions` (`RISK-PERM-02` fixed 2026-10-21).
+**Related:** `RISK-PERM-02`, `V-S3`, `V-S4`.
 
 ### RISK-TIME-01 — Timeout gaps in network/subprocess paths
 
-**Status:** needs-verify · **Severity:** medium · **Verified:** 2026-10-21 (SDK timeout=false), other paths code-read
-**Evidence:** `packages/sdk/src/v2/client.ts:47-57` (`req.timeout = false`); `packages/axiomsec/src/npm/npm.ts:43` (unbounded `fetch`); `packages/axiomsec/src/installer/installation.ts:107,123,153` (spawns without timeout); `packages/axiomsec/src/tools/share.ts:84-97,190-198` (signing/tar without timeout); `packages/axiomsec/src/cli/cmd/replay.ts:126` (minisign spawn).
-**Why it matters:** A hung registry, installer, signer, or tar can stall the agent loop indefinitely.
-**Re-verify:** `sed -n '47,57p' packages/sdk/src/v2/client.ts`; `rg -n "fetch\\(|spawn\\(|spawnSync\\(" packages/axiomsec/src packages/sdk/src` and inspect each call for a signal/timeout.
-**Safe check:** Static read only. Do not start a hanging request.
-**Fix direction:** Add `AbortSignal.timeout`/`Effect.timeout` to every path; propagate a typed timeout error.
-**Related:** `ENG-03`, `V-S8`.
+**Status:** fixed 2026-10-21 (SDK streaming remains intentionally unbounded) · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/sdk/src/v2/client.ts:47-57` (`req.timeout = false`); `packages/axiomsec/src/npm/npm.ts:43` (unbounded registry `fetch`); `packages/axiomsec/src/installer/installation.ts:107,123,153` (spawns without timeout); `packages/axiomsec/src/tools/share.ts:84-97,190-198` (signing/tar without timeout); `packages/axiomsec/src/cli/cmd/replay.ts:126` (minisign spawn).
+**Why it matters:** A hung registry, installer, signer, or tar could stall the agent loop indefinitely.
+**Fix:** replay signing already had 10-second minisign/cosign timeouts (`replay.ts:129,145`). `tools/share.ts:136,145` now bounds signing to 10 seconds and kills a tar after 120 seconds (`share.ts:245-247`). `npm.ts:43` uses `AbortSignal.timeout(15_000)` and falls back to the cached version. `installer/installation.ts:113,133,168` bounds read-only commands to 30 seconds and installers/upgrade scripts to 10 minutes with a typed failure result.
+**Reproduction:** share build with redaction still succeeds end-to-end after the tar timer change; the other paths are code-verified because they require package registries or installers.
+**Residual:** `packages/sdk/src/v2/client.ts:47-57` deliberately disables request timeout for long-lived streaming; SDK consumers must supply their own cancellation. Re-audit any new bare `fetch`/`spawn` before adding it.
+**Re-verify:** `rg -n "fetch\\(|spawn\\(|spawnSync\\(|exec\\(" packages/axiomsec/src packages/sdk/src` and inspect each call for a signal/timeout; run `VERIFICATION.md` §V-S6.
+**Safe check:** Local, disposable share bundle; do not start a hanging registry request.
+**Related:** `ENG-03`, `RISK-BUILD-01`, `RISK-BUILD-04`, `V-S6`, `V-S7`, `V-S8`.
 
 ### RISK-BUILD-01 — Hardcoded `/tmp` paths
 
-**Status:** open · **Severity:** medium · **Verified:** 2026-10-21
-**Evidence:** `packages/axiomsec/drizzle.config.ts:8` (`/tmp/axiomsec-dev.db`); `packages/axiomsec/src/cli/cmd/replay.ts:122` (`/tmp/axiomsec-sign-*.txt`).
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/drizzle.config.ts:8` (`/tmp/axiomsec-dev.db`); `packages/axiomsec/src/cli/cmd/replay.ts:122` (`/tmp/axiomsec-sign-*.txt`).
 **Why it matters:** Windows dev and CI can fail or write to an unexpected location; temp files can collide.
-**Re-verify:** `sed -n '8p' packages/axiomsec/drizzle.config.ts`; `sed -n '120,130p' packages/axiomsec/src/cli/cmd/replay.ts`.
-**Safe check:** Read the files. On Windows, use a disposable clone before running `db generate`.
-**Fix direction:** Use `os.tmpdir()` and a unique suffix; honor `TMPDIR`/`TEMP`.
-**Related:** `ENG-06`, `V-S8`.
+**Fix:** `packages/axiomsec/drizzle.config.ts:1-10` now uses `os.tmpdir()` with an `AXIOMSEC_DEV_DB` override. `packages/axiomsec/src/cli/cmd/replay.ts:4,125-137` uses `os.tmpdir()` plus a random suffix and removes the temp input/signature files in `finally`; minisign/cosign spawns now have a 10-second timeout (`replay.ts:129,145`).
+**Re-verify:** `bun -e 'const cfg=(await import("./packages/axiomsec/drizzle.config.ts")).default; console.log(cfg.dbCredentials.url)'` (resolved Windows temp path); `replay verify` still reports `sha256: ok`.
+**Safe check:** Local, disposable files only.
+**Related:** `ENG-06`, `RISK-TIME-01`, `V-S7`, `V-S8`.
+
+### RISK-SNAPSHOT-01 — Snapshot ignore check exceeded Windows command-line limits
+
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/snapshots/snapshot.ts:166-188` passed every changed path as trailing arguments to `git ls-files`. A mock-provider run in a workspace with 536 tracked paths emitted `ENAMETOOLONG: name too long, uv_spawn` as a `session.error` immediately after each model step, even though the model response had completed.
+**Why it matters:** The core agent loop reported an error after every response on large or noisy workspaces on Windows; the snapshot patch could not finalize.
+**Fix:** `packages/axiomsec/src/snapshots/snapshot.ts:160-190` batches the pathspecs in groups of 100 and unions the results, keeping each git command line bounded.
+**Reproduction:** with the local mock provider in `VERIFICATION.md` §V-S11, the pre-fix run logged a `session.error` after `step_finish`; the post-fix run exits 0 with a text event, `step_finish`, and zero error events in the same workspace.
+**Re-verify:** `VERIFICATION.md` §V-S11; `rg -n "\\.\\.\\.files" packages/axiomsec/src/snapshots/snapshot.ts` should not show an unbounded git argument list.
+**Safe check:** Loopback mock provider and disposable workspace only.
+**Related:** `ENG-03`, `ENG-06`, `V-S11`.
 
 ### RISK-BUILD-02 — Generated artifacts can drift; SDK generator is missing
 
-**Status:** open · **Severity:** medium · **Verified:** 2026-10-21
-**Evidence:** `packages/sdk/src/v2/gen/*` says generated; `packages/sdk/package.json:26-28` has only `typecheck`, no generate script; `packages/axiomsec/script/generate.ts` writes `packages/axiomsec/src/providers/models-snapshot.*`; `.gitignore:48` ignores the snapshot.
-**Why it matters:** A route/schema change can leave the SDK stale; a fresh checkout may not regenerate the model snapshot reproducibly.
-**Re-verify:** `sed -n '26,28p' packages/sdk/package.json`; `sed -n '10,20p' packages/axiomsec/script/generate.ts`.
-**Safe check:** Read-only. Do not hand-edit `gen/*`.
-**Fix direction:** Check in the OpenAPI generator config/script; make regeneration reproducible and document it.
-**Related:** `ENG-05`, `CHANGE-PLAYBOOKS.md` §F, `V-S5`.
+**Status:** open (blocked on the missing generator config) · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence:** `packages/sdk/src/v2/gen/*` is marked auto-generated by `@hey-api/openapi-ts`; `packages/sdk/package.json` has only `typecheck`, no generate script or generator dependency; `packages/axiomsec/script/generate.ts` writes `packages/axiomsec/src/providers/models-snapshot.*`, which `.gitignore:48` ignores.
+**Verified:** `axiomsec generate` prints a valid OpenAPI 3.1.1 document (305,279 bytes in the disposable workspace), so the input side is reproducible.
+**Why it matters:** A route/schema change can leave the SDK stale; a fresh checkout cannot regenerate `packages/sdk/src/v2/gen/*` without recovering the original `@hey-api/openapi-ts` version and plugin configuration.
+**Blocker:** Establishing the generator requires pinning `@hey-api/openapi-ts` (lockfile change) and recovering its exact output/plugin config. Do not hand-edit `gen/*` or invent a config that silently changes the generated client.
+**Re-verify:** `sed -n '26,28p' packages/sdk/package.json`; `axiomsec generate | head`; inspect the `gen/*` headers.
+**Safe check:** Read-only; generation is a separate repo-structure change.
+**Fix direction:** Recover the generator version/config, check it in with a pinned script, and diff the regenerated output before committing.
+**Related:** `ENG-05`, `CHANGE-PLAYBOOKS.md` §F, `V-S5`, `V-S8`.
 
 ### RISK-BUILD-03 — Build failed resolving Playwright optional dependencies
 
@@ -206,6 +287,16 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Safe check:** Local build only; do not publish or sign artifacts.
 **Fix direction:** Keep optional Playwright paths external; do not add heavyweight Electron dependencies just to satisfy the bundler.
 **Related:** `RISK-BUILD-01`, `RISK-BUILD-02`, `V-S8`.
+
+### RISK-BUILD-04 — Share tarball failed on Windows absolute paths
+
+**Status:** fixed 2026-10-21 · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/share.ts:190-193` passed the absolute `C:\...` tarball and staging paths to `tar`; GNU tar interpreted the drive letter as a remote host: `tar (child): Cannot connect to C: resolve failed` (exit 2).
+**Why it matters:** `share build` could not produce a bundle on Windows, blocking evidence handoff and the V-S6 canary check.
+**Fix:** `packages/axiomsec/src/tools/share.ts:239-243` spawns tar with `cwd: opDir` and relative basenames, so no drive-letter argument reaches tar. The returned path and metadata remain absolute.
+**Re-verify:** run `debug agent security --tool share --dangerously-skip-permissions --params '{"action":"build"}'` in a disposable Windows workspace; the tarball must exist and `tar -tzf` must list it.
+**Safe check:** Disposable workspace, canary content only.
+**Related:** `RISK-BUILD-01`, `V-S6`, `V-S8`.
 
 ### RISK-RELEASE-01 — Release test gate failed when no tests existed
 
@@ -255,32 +346,33 @@ This register documents risks; it does not fix them unless an entry is marked `f
 
 ### RISK-DOC-01 — README/CHANGELOG advertise `/initialize`; the command is `/init`
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-21
-**Evidence:** `README.md:100,171` and `CHANGELOG.md:44` describe `/initialize`; `packages/axiomsec/src/commands/command.ts:70` defines `INIT: "init"` and `:181-190` registers “guided AGENTS.md setup”; `packages/axiomsec/src/commands/template/initialize.txt:1` says “Create or update AGENTS.md”.
-**Why it matters:** An agent following the README can run `/init` expecting an operation scaffold and instead rewrite the root `AGENTS.md` harness.
-**Re-verify:** `sed -n '96,104p;166,175p' README.md`; `sed -n '40,48p' CHANGELOG.md`; `sed -n '69,71p;181,190p' packages/axiomsec/src/commands/command.ts`.
+**Status:** fixed 2026-10-21 · **Severity:** low · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `README.md:100,171` and `CHANGELOG.md:44` described `/initialize`; `packages/axiomsec/src/commands/command.ts:70` defines `INIT: "init"` and `:181-190` registers “guided AGENTS.md setup”; `packages/axiomsec/src/commands/template/initialize.txt:1` says “Create or update AGENTS.md”.
+**Why it matters:** An agent following the README could run `/init` expecting an operation scaffold and instead rewrite the root `AGENTS.md` harness.
+**Fix:** `README.md:100,171` now documents `/init` as the AGENTS.md harness writer and points to `/pwn` or `operation new` for operations. Historical CHANGELOG release notes are left unchanged so the record stays accurate.
+**Re-verify:** `rg -n "/initialize" README.md` (expect no current-command matches); `sed -n '69,71p;181,190p' packages/axiomsec/src/commands/command.ts`.
 **Safe check:** Read-only. Do not run `/init` at repo root.
-**Fix direction:** Correct the docs to `/init` (AGENTS.md) and `/pwn`/`operation new` for operations.
 **Related:** `AGENTS.md` danger zone, `VERIFICATION.md`.
 
 ### RISK-DOC-02 — README tool list is a subset; registry keys differ from tool ids
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-21
-**Evidence:** `README.md:183-194` lists a marketing subset; `packages/axiomsec/src/tools/registry.ts:236-336` shows registry keys (`fetch`, `todo`, `search`, `code`, `patch`, `httprequest`) that differ from tool ids (`webfetch`, `todowrite`, `websearch`, `codesearch`, `apply_patch`, `http_request`); `question`/`plan` are conditional.
+**Status:** fixed 2026-10-21 · **Severity:** low · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `README.md:183-194` listed a marketing subset; `packages/axiomsec/src/tools/registry.ts:236-336` shows registry keys (`fetch`, `todo`, `search`, `code`, `patch`, `httprequest`) that differ from tool ids (`webfetch`, `todowrite`, `websearch`, `codesearch`, `apply_patch`, `http_request`); `question`/`plan` are conditional.
 **Why it matters:** Agents grep for the wrong name or assume a tool is always visible.
-**Re-verify:** `sed -n '183,194p' README.md`; `sed -n '236,336p' packages/axiomsec/src/tools/registry.ts`.
+**Fix:** The README tool-surface section now states that tool ids are model-facing and `registry.ts` is the source of truth, calls out key/id differences, and lists conditional tools (`question`, `plan`, `task`, MCP/plugin).
+**Re-verify:** read the README tool-surface section; compare with `packages/axiomsec/src/tools/registry.ts:236-336`.
 **Safe check:** Read-only.
-**Fix direction:** Document the registry as the source of truth; list conditional tools explicitly.
 **Related:** `ARCHITECTURE.md` §7.
 
 ### RISK-LINT-01 — Lint/format configuration is inconsistent
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-21
-**Evidence:** `.oxlintrc.json:3-5,44-49` has duplicate `options` keys; Prettier config at `package.json:101-104` is unenforced (no format script/CI); `.editorconfig:9` sets 80 columns while Prettier uses 120.
+**Status:** fixed 2026-10-21 · **Severity:** low · **Verified:** 2026-10-21
+**Evidence (pre-fix):** `.oxlintrc.json:3-5,44-49` had duplicate `options` keys; Prettier config at `package.json:101-104` is unenforced (no format script/CI); `.editorconfig:9` set 80 columns while Prettier uses 120.
 **Why it matters:** Agents can “fix” formatting in unrelated files or trust a lint pass that ignores formatting.
-**Re-verify:** `sed -n '1,51p' .oxlintrc.json`; `sed -n '101,104p' package.json`; `sed -n '9p' .editorconfig`.
+**Fix:** `.oxlintrc.json` now has one `options` block; `.editorconfig` uses 120 columns. Prettier remains intentionally unenforced (no format script or CI gate), documented here rather than silently assumed.
+**Residual:** `bun run lint` still reports warnings (858 baseline after this cleanup) with 0 errors; do not mass-format unrelated files.
+**Re-verify:** `sed -n '1,20p' .oxlintrc.json`; `sed -n '9p' .editorconfig`; `bun run lint`.
 **Safe check:** Read-only; run `bun run lint` if needed.
-**Fix direction:** Remove duplicate keys, wire a format check or document the absence, reconcile column width.
 **Related:** `ENG-05`, `V-S8`.
 
 ### RISK-CI-01 — CI lacks tests, format, and security checks

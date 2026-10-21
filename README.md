@@ -97,7 +97,7 @@ Inside the TUI:
 
 ```text
 /doctor                 inspect local tool readiness
-/initialize             scaffold an operation in the current workspace
+/init                  create or update the AGENTS.md harness
 /runbook                start a security workflow
 /pwn <target>           create a scoped pentest operation for a target
 /share                  export the active operation
@@ -168,7 +168,7 @@ Inside the TUI, slash commands launch built-in workflows. The following ship wit
 | Command | What it does |
 | --- | --- |
 | `/doctor` | Inspect local tool readiness (which security tools are available, missing or degraded). |
-| `/initialize` | Scaffold an AxiomSec operation in the current workspace. |
+| `/init` | Create or update the `AGENTS.md` harness. Use `/pwn` or `axiomsec operation new` to scaffold an operation. |
 | `/runbook` | Start a runbook-driven security workflow. |
 | `/pwn` | Create a scoped pentest operation for a target. |
 | `/play` | Run a freeform agent play. |
@@ -192,6 +192,8 @@ AxiomSec gives the agent a small set of useful security surfaces — not a giant
 - **Environment:** `doctor`, `workspace`, `vault`, `net`, `crypto`, `analyze`
 
 `knowledge` is the preferred research surface — it routes vulnerability intelligence, package advisories, methodology, tradecraft, exploit signals and installed tool docs through one provenance-aware broker. `cve` remains as a compatibility alias for direct CVE lookup.
+
+Tool ids above are the model-facing names. `packages/axiomsec/src/tools/registry.ts` is the source of truth; registry keys can differ (for example `httprequest` resolves to `http_request`), and `question`, `plan`, `task`, and MCP/plugin tools are conditional.
 
 Local tools make AxiomSec stronger. Recommended baseline:
 
