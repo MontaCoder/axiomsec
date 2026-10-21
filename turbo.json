@@ -1,0 +1,12 @@
+{
+  "$schema": "https://v2-8-13.turborepo.dev/schema.json",
+  "globalEnv": ["CI", "AXIOMSEC_DISABLE_SHARE"],
+  "globalPassThroughEnv": ["CI", "AXIOMSEC_DISABLE_SHARE"],
+  "tasks": {
+    "typecheck": {},
+    "build": {
+      "dependsOn": [],
+      "outputs": ["dist/**"]
+    }
+  }
+}

@@ -1,0 +1,68 @@
+# OS / Editor
+.DS_Store
+.idea
+.vscode
+.codex
+*~
+Session.vim
+
+# Dependencies & build outputs
+node_modules
+dist/
+build/
+ts-dist
+.turbo/
+.next/
+target
+result
+a.out
+
+# Bun / TypeScript caches
+*.bun-build
+tsconfig.tsbuildinfo
+
+# Logs & ephemera
+*.log
+logs/
+tmp
+playground
+.scripts
+.direnv/
+.worktrees
+.sst
+.env
+
+# Tests & fixtures (lite repo: tests are not tracked)
+**/test/
+**/tests/
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+**/fixtures/
+**/fixture/
+**/__fixtures__/
+**/mocks/
+**/__mocks__/
+**/models-snapshot.*
+
+# Bench / scratch / generated artifacts
+bench-results-*.json
+**/bench-results-*.json
+temporary-*.md
+UPCOMING_CHANGELOG.md
+session.json
+/axiomsec.json
+.axiomsec/
+.playwright-browsers/
+
+# Internal notes / private skills
+notes/
+.superpowers/
+**/.serena/
+refs
+
+# Internal docs (not for public release)
+/docs/superpowers
+opencode.json

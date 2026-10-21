@@ -1,0 +1,389 @@
+import { Provider } from "@/providers"
+import { Log } from "@/support"
+import { Context, Effect, Layer, Record } from "effect"
+import * as Stream from "effect/Stream"
+import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import { mergeDeep, pipe } from "remeda"
+
+import { ProviderTransform } from "@/providers"
+import { Config } from "@/config"
+import { Instance } from "@/project/instance"
+import type { Agent } from "@/agent/agent"
+import type { MessageV2 } from "./message-v2"
+import { Plugin } from "@/plugins"
+import { SystemPrompt } from "./system"
+import { Flag } from "@/flags/flag"
+import { Permission } from "@/permissions"
+import { Auth } from "@/auth"
+import { Installation } from "@/installer"
+import { InstallationVersion } from "@/installer/version"
+import * as Option from "effect/Option"
+import * as OtelTracer from "@effect/opentelemetry/Tracer"
+
+export namespace LLM {
+  const log = Log.create({ service: "llm" })
+  export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+  type Result = Awaited<ReturnType<typeof streamText>>
+
+  export type StreamInput = {
+    user: MessageV2.User
+    sessionID: string
+    parentSessionID?: string
+    model: Provider.Model
+    agent: Agent.Info
+    permission?: Permission.Ruleset
+    system: string[]
+    messages: ModelMessage[]
+    small?: boolean
+    tools: Record<string, Tool>
+    retries?: number
+    toolChoice?: "auto" | "required" | "none"
+  }
+
+  export type StreamRequest = StreamInput & {
+    abort: AbortSignal
+  }
+
+  export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
+
+  export interface Interface {
+    readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
+  }
+
+  export class Service extends Context.Service<Service, Interface>()("@axiomsec/LLM") {}
+
+  const live: Layer.Layer<
+    Service,
+    never,
+    Auth.Service | Config.Service | Provider.Service | Plugin.Service | Permission.Service
+  > = Layer.effect(
+    Service,
+    Effect.gen(function* () {
+      const auth = yield* Auth.Service
+      const config = yield* Config.Service
+      const provider = yield* Provider.Service
+      const plugin = yield* Plugin.Service
+      const perm = yield* Permission.Service
+
+      const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+        const l = log
+          .clone()
+          .tag("providerID", input.model.providerID)
+          .tag("modelID", input.model.id)
+          .tag("sessionID", input.sessionID)
+          .tag("small", (input.small ?? false).toString())
+          .tag("agent", input.agent.name)
+          .tag("mode", input.agent.mode)
+        l.info("stream", {
+          modelID: input.model.id,
+          providerID: input.model.providerID,
+        })
+
+        const [language, cfg, item, info] = yield* Effect.all(
+          [
+            provider.getLanguage(input.model),
+            config.get(),
+            provider.getProvider(input.model.providerID),
+            auth.get(input.model.providerID),
+          ],
+          { concurrency: "unbounded" },
+        )
+
+        // TODO: move this to a proper hook
+        const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
+
+        const system: string[] = []
+        // System prompt assembly:
+        //
+        // The provider prompt (default.txt / gpt.txt / anthropic.txt /
+        // gemini.txt) is the always-on operator-CLI baseline — it carries
+        // tone, conciseness rules, anti-hallucination guarantees, tool-call
+        // semantics, and terminal-formatting conventions. It applies to
+        // every user-facing model interaction.
+        //
+        // The agent prompt layers the domain persona on top — cyber posture,
+        // tool palette flavour, methodology citations, escalation paths.
+        //
+        // Hidden specialised agents (compaction / title / summary) intentionally
+        // skip the baseline: their prompts are narrow task instructions that
+        // would be diluted by the operator-CLI guidance.
+        const isSpecialised = input.agent.hidden === true
+        const baseline = isSpecialised
+          ? input.agent.prompt
+            ? [input.agent.prompt]
+            : SystemPrompt.provider(input.model)
+          : [
+              ...SystemPrompt.provider(input.model),
+              ...(input.agent.prompt ? [input.agent.prompt] : []),
+            ]
+        system.push(
+          [
+            ...baseline,
+            // any custom prompt passed into this call
+            ...input.system,
+            // any custom prompt from last user message
+            ...(input.user.system ? [input.user.system] : []),
+          ]
+            .filter((x) => x)
+            .join("\n"),
+        )
+
+        const header = system[0]
+        yield* plugin.trigger(
+          "experimental.chat.system.transform",
+          { sessionID: input.sessionID, model: input.model },
+          { system },
+        )
+        // rejoin to maintain 2-part structure for caching if header unchanged
+        if (system.length > 2 && system[0] === header) {
+          const rest = system.slice(1)
+          system.length = 0
+          system.push(header, rest.join("\n"))
+        }
+
+        const variant =
+          !input.small && input.model.variants && input.user.model.variant
+            ? input.model.variants[input.user.model.variant]
+            : {}
+        const base = input.small
+          ? ProviderTransform.smallOptions(input.model)
+          : ProviderTransform.options({
+              model: input.model,
+              sessionID: input.sessionID,
+              providerOptions: item.options,
+            })
+        const options: Record<string, any> = pipe(
+          base,
+          mergeDeep(input.model.options),
+          mergeDeep(input.agent.options),
+          mergeDeep(variant),
+        )
+        if (isOpenaiOauth) {
+          options.instructions = system.join("\n")
+        }
+
+        const messages = isOpenaiOauth
+          ? input.messages
+          : [
+                ...system.map(
+                  (x): ModelMessage => ({
+                    role: "system",
+                    content: x,
+                  }),
+                ),
+                ...input.messages,
+              ]
+
+        const params = yield* plugin.trigger(
+          "chat.params",
+          {
+            sessionID: input.sessionID,
+            agent: input.agent.name,
+            model: input.model,
+            provider: item,
+            message: input.user,
+          },
+          {
+            temperature: input.model.capabilities.temperature
+              ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
+              : undefined,
+            topP: input.agent.topP ?? ProviderTransform.topP(input.model),
+            topK: ProviderTransform.topK(input.model),
+            maxOutputTokens: ProviderTransform.maxOutputTokens(input.model),
+            options,
+          },
+        )
+
+        const { headers } = yield* plugin.trigger(
+          "chat.headers",
+          {
+            sessionID: input.sessionID,
+            agent: input.agent.name,
+            model: input.model,
+            provider: item,
+            message: input.user,
+          },
+          {
+            headers: {},
+          },
+        )
+
+        const tools = resolveTools(input)
+
+        // LiteLLM and some Anthropic proxies require the tools parameter to be present
+        // when message history contains tool calls, even if no tools are being used.
+        // Add a dummy tool that is never called to satisfy this validation.
+        // This is enabled for:
+        // 1. Providers with "litellm" in their ID or API ID (auto-detected)
+        // 2. Providers with explicit "litellmProxy: true" option (opt-in for custom gateways)
+        const isLiteLLMProxy =
+          item.options?.["litellmProxy"] === true ||
+          input.model.providerID.toLowerCase().includes("litellm") ||
+          input.model.api.id.toLowerCase().includes("litellm")
+
+        // LiteLLM/Bedrock rejects requests where the message history contains tool
+        // calls but no tools param is present. When there are no active tools (e.g.
+        // during compaction), inject a stub tool to satisfy the validation requirement.
+        // The stub description explicitly tells the model not to call it.
+        if (
+          (isLiteLLMProxy || input.model.providerID.includes("github-copilot")) &&
+          Object.keys(tools).length === 0 &&
+          hasToolCalls(input.messages)
+        ) {
+          tools["_noop"] = tool({
+            description: "Do not call this tool. It exists only for API compatibility and must never be invoked.",
+            inputSchema: jsonSchema({
+              type: "object",
+              properties: {
+                reason: { type: "string", description: "Unused" },
+              },
+            }),
+            execute: async () => ({ output: "", title: "", metadata: {} }),
+          })
+        }
+
+        const tracer = cfg.experimental?.openTelemetry
+          ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
+          : undefined
+
+        return streamText({
+          onError(error) {
+            l.error("stream error", {
+              error,
+            })
+          },
+          async experimental_repairToolCall(failed) {
+            const lower = failed.toolCall.toolName.toLowerCase()
+            if (lower !== failed.toolCall.toolName && tools[lower]) {
+              l.info("repairing tool call", {
+                tool: failed.toolCall.toolName,
+                repaired: lower,
+              })
+              return {
+                ...failed.toolCall,
+                toolName: lower,
+              }
+            }
+            return {
+              ...failed.toolCall,
+              input: JSON.stringify({
+                tool: failed.toolCall.toolName,
+                error: failed.error.message,
+              }),
+              toolName: "invalid",
+            }
+          },
+          temperature: params.temperature,
+          topP: params.topP,
+          topK: params.topK,
+          providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+          activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+          tools,
+          toolChoice: input.toolChoice,
+          maxOutputTokens: params.maxOutputTokens,
+          abortSignal: input.abort,
+          headers: {
+            ...(input.model.providerID.startsWith("axiomsec")
+              ? {
+                  "x-axiomsec-project": Instance.project.id,
+                  "x-axiomsec-session": input.sessionID,
+                  "x-axiomsec-request": input.user.id,
+                  "x-axiomsec-client": Flag.AXIOMSEC_CLIENT,
+                }
+              : {
+                  "x-session-affinity": input.sessionID,
+                  ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+                  "User-Agent": `axiomsec/${InstallationVersion}`,
+                }),
+            ...input.model.headers,
+            ...headers,
+          },
+          maxRetries: input.retries ?? 0,
+          messages,
+          model: wrapLanguageModel({
+            model: language,
+            middleware: [
+              {
+                specificationVersion: "v3" as const,
+                async transformParams(args) {
+                  if (args.type === "stream") {
+                    // @ts-expect-error
+                    args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                  }
+                  return args.params
+                },
+              },
+            ],
+          }),
+          experimental_telemetry: {
+            isEnabled: cfg.experimental?.openTelemetry,
+            functionId: "session.llm",
+            tracer,
+            metadata: {
+              userId: cfg.username ?? "unknown",
+              sessionId: input.sessionID,
+            },
+          },
+        })
+      })
+
+      const stream: Interface["stream"] = (input) =>
+        Stream.scoped(
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const ctrl = yield* Effect.acquireRelease(
+                Effect.sync(() => new AbortController()),
+                (ctrl) => Effect.sync(() => ctrl.abort()),
+              )
+
+              const result = yield* run({ ...input, abort: ctrl.signal })
+
+              return Stream.fromAsyncIterable(result.fullStream, (e) => (e instanceof Error ? e : new Error(String(e))))
+            }),
+          ),
+        )
+
+      return Service.of({ stream })
+    }),
+  )
+
+  export const layer = live.pipe(Layer.provide(Permission.defaultLayer))
+
+  export const defaultLayer = Layer.suspend(() =>
+    layer.pipe(
+      Layer.provide(Auth.defaultLayer),
+      Layer.provide(Config.defaultLayer),
+      Layer.provide(Provider.defaultLayer),
+      Layer.provide(Plugin.defaultLayer),
+    ),
+  )
+
+  function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+    const disabled = Permission.disabled(
+      Object.keys(input.tools),
+      Permission.merge(input.agent.permission, input.permission ?? []),
+    )
+    // Visibility gate: the agent's `toolset_exclude` removes tool ids from
+    // the surface the model ever sees. Distinct from permission (which is
+    // the runtime gate). Exclude-only by design — unknown ids in the list
+    // are silently ignored so the model fails-open if a tool is renamed or
+    // removed in a future release.
+    const excluded = new Set(input.agent.toolset_exclude ?? [])
+    return Record.filter(
+      input.tools,
+      (_, k) => input.user.tools?.[k] !== false && !disabled.has(k) && !excluded.has(k),
+    )
+  }
+
+  // Check if messages contain any tool-call content
+  // Used to determine if a dummy tool should be added for LiteLLM proxy compatibility
+  export function hasToolCalls(messages: ModelMessage[]): boolean {
+    for (const msg of messages) {
+      if (!Array.isArray(msg.content)) continue
+      for (const part of msg.content) {
+        if (part.type === "tool-call" || part.type === "tool-result") return true
+      }
+    }
+    return false
+  }
+}
