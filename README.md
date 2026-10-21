@@ -13,7 +13,7 @@ AxiomSec wraps a model with a security workspace instead of a chat box. It keeps
 ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═════╝
 ```
 
-**Version:** 0.2.0 · **License:** AGPL-3.0-or-later · **Runtime:** Bun ≥ 1.3.11 · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md)
+**Version:** 0.3.0 · **License:** AGPL-3.0-or-later · **Runtime:** Bun ≥ 1.3.11 · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md)
 
 ---
 
