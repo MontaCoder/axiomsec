@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, stat as statFile, writeFile } from "fs/promises"
 import { existsSync, statSync } from "fs"
 import { realpathSync } from "fs"
-import { dirname, join, relative, resolve as pathResolve, win32 } from "path"
+import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve, sep, win32 } from "path"
 import { Glob } from "@axiomsec/shared/util/glob"
 
 // Fast sync version for metadata checks
@@ -120,8 +120,25 @@ export function windowsPath(p: string): string {
       .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
   )
 }
+function canonicalPath(p: string): string {
+  let current = pathResolve(p)
+  const tail: string[] = []
+  while (true) {
+    try {
+      const real = realpathSync.native(current)
+      return tail.length ? join(real, ...tail.reverse()) : real
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return pathResolve(p)
+      tail.push(basename(current))
+      current = parent
+    }
+  }
+}
+
 export function contains(parent: string, child: string) {
-  return !relative(parent, child).startsWith("..")
+  const rel = relative(canonicalPath(parent), canonicalPath(child))
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
 
 export async function findUp(

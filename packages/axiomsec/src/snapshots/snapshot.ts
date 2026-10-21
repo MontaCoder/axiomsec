@@ -142,30 +142,34 @@ export const layer: Layer.Layer<
           )
           const out = new Set(check.code === 0 || check.code === 1 ? check.text.split("\0").filter(Boolean) : [])
 
-          const tracked = yield* git(
-            [
-              ...quote,
-              "--git-dir",
-              path.join(state.worktree, ".git"),
-              "--work-tree",
-              state.worktree,
-              "ls-files",
-              "-z",
-              "--cached",
-              "--others",
-              "--ignored",
-              "--exclude-standard",
-              "--",
-              ...files,
-            ],
-            {
-              cwd: state.directory,
-            },
-          )
-
-          if (tracked.code === 0 || tracked.code === 1) {
-            for (const file of tracked.text.split("\0").filter(Boolean)) out.add(file)
+          const tracked = new Set<string>()
+          for (let i = 0; i < files.length; i += 100) {
+            const batch = files.slice(i, i + 100)
+            const result = yield* git(
+              [
+                ...quote,
+                "--git-dir",
+                path.join(state.worktree, ".git"),
+                "--work-tree",
+                state.worktree,
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--",
+                ...batch,
+              ],
+              {
+                cwd: state.directory,
+              },
+            )
+            if (result.code === 0 || result.code === 1) {
+              for (const file of result.text.split("\0").filter(Boolean)) tracked.add(file)
+            }
           }
+          for (const file of tracked) out.add(file)
 
           return out
         })

@@ -70,9 +70,17 @@ export async function migrate(workspace: string): Promise<void> {
   const root = path.join(workspace, ROOT_DIRNAME, "operation")
   if (!existsSync(root)) return
   const entries = await readdir(root, { withFileTypes: true })
+  const failures: string[] = []
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     if (entry.name === "_legacy") continue
-    await migrateSlug(workspace, entry.name).catch(() => undefined)
+    try {
+      await migrateSlug(workspace, entry.name)
+    } catch (error) {
+      failures.push(`${entry.name}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`operation migration failed for ${failures.length} operation(s): ${failures.join("; ")}`)
   }
 }

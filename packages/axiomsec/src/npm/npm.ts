@@ -40,8 +40,13 @@ function resolveEntryPoint(name: string, dir: string) {
 }
 
 export async function outdated(pkg: string, cachedVersion: string): Promise<boolean> {
-  const response = await fetch(`https://registry.npmjs.org/${pkg}`)
-  if (!response.ok) {
+  const response = await fetch(`https://registry.npmjs.org/${pkg}`, { signal: AbortSignal.timeout(15_000) }).catch(
+    (error) => {
+      log.warn("Failed to resolve latest version, using cached", { pkg, cachedVersion, error: String(error) })
+      return undefined
+    },
+  )
+  if (!response?.ok) {
     log.warn("Failed to resolve latest version, using cached", { pkg, cachedVersion })
     return false
   }

@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { dirname, isAbsolute, join, relative, resolve as pathResolve } from "path"
+import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve, sep } from "path"
 import { realpathSync } from "fs"
 import * as NFS from "fs/promises"
 import { lookup } from "mime-types"
@@ -224,10 +224,28 @@ export namespace AppFileSystem {
       .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
   }
 
+  function canonicalPath(p: string): string {
+    let current = pathResolve(p)
+    const tail: string[] = []
+    while (true) {
+      try {
+        const real = realpathSync.native(current)
+        return tail.length ? join(real, ...tail.reverse()) : real
+      } catch {
+        const parent = dirname(current)
+        if (parent === current) return pathResolve(p)
+        tail.push(basename(current))
+        current = parent
+      }
+    }
+  }
+
   export function contains(parent: string, child: string) {
-    const rel = relative(parent, child)
+    const rel = relative(canonicalPath(parent), canonicalPath(child))
     // On Windows, relative() returns the absolute `to` path when paths are on different
     // drives (e.g. project on D:\ vs file on C:\). isAbsolute catches that case.
-    return !rel.startsWith("..") && !isAbsolute(rel)
+    // Canonicalization resolves symlinks/junctions before containment so a link inside
+    // the workspace cannot point at an external target.
+    return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
   }
 }

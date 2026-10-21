@@ -110,6 +110,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return out
         },
         Effect.scoped,
+        Effect.timeoutOrElse({ duration: 30_000, orElse: () => Effect.succeed("") }),
         Effect.catch(() => Effect.succeed("")),
       )
 
@@ -129,6 +130,11 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return { code, stdout, stderr }
         },
         Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: 600_000,
+          orElse: () =>
+            Effect.succeed({ code: ChildProcessSpawner.ExitCode(1), stdout: "", stderr: "installer command timed out" }),
+        }),
         Effect.catch(() => Effect.succeed({ code: ChildProcessSpawner.ExitCode(1), stdout: "", stderr: "" })),
       )
 
@@ -159,6 +165,11 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return { code, stdout, stderr }
         },
         Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: 600_000,
+          orElse: () =>
+            Effect.succeed({ code: ChildProcessSpawner.ExitCode(1), stdout: "", stderr: "installer command timed out" }),
+        }),
         Effect.orDie,
       )
 

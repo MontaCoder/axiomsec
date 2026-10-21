@@ -20,15 +20,30 @@ import { migrate } from "./migration"
 import { parseScope } from "./scope"
 import type { Boundary } from "../boundary/schema"
 import { Instance } from "@/project/instance"
+import { Log } from "@/support"
 import { and, Database, desc, eq } from "@/storage"
 import { CyberFactTable, CyberLedgerTable, CyberRelationTable } from "../cyber/cyber.sql"
 
+const migrationLog = Log.create({ service: "operation.migration" })
 const migrated = new Set<string>()
+const migrationWarned = new Set<string>()
 
 async function ensureMigrated(workspace: string): Promise<void> {
   if (migrated.has(workspace)) return
-  migrated.add(workspace)
-  await migrate(workspace).catch(() => undefined)
+  try {
+    await migrate(workspace)
+    migrated.add(workspace)
+    migrationWarned.delete(workspace)
+  } catch (error) {
+    // Leave the workspace unmarked so the next access retries; log once until it succeeds.
+    if (!migrationWarned.has(workspace)) {
+      migrationWarned.add(workspace)
+      migrationLog.warn("operation migration failed; will retry", {
+        workspace,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 }
 
 export const ROOT_DIRNAME = ".axiomsec"
@@ -179,11 +194,35 @@ export function safeSlug(input: string): string {
   return s || "op"
 }
 
-async function uniqueSlug(workspace: string, base: string): Promise<string> {
+async function reserveOperationDir(workspace: string, base: string): Promise<{ slug: string; dir: string }> {
   const tried = safeSlug(base)
-  if (!existsSync(opDir(workspace, tried))) return tried
+  await mkdir(rootDir(workspace), { recursive: true })
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").slice(0, 12)
-  return `${tried}-${stamp}`
+  const reserved = [tried, `${tried}-${stamp}`]
+  for (const candidate of reserved) {
+    const dir = opDir(workspace, candidate)
+    try {
+      await mkdir(dir)
+      return { slug: candidate, dir }
+    } catch (error) {
+      if (!isErrnoCode(error, "EEXIST")) throw error
+    }
+  }
+  for (let i = 0; i < 100; i++) {
+    const candidate = `${tried}-${stamp}-${Math.random().toString(36).slice(2, 8)}`
+    const dir = opDir(workspace, candidate)
+    try {
+      await mkdir(dir)
+      return { slug: candidate, dir }
+    } catch (error) {
+      if (!isErrnoCode(error, "EEXIST")) throw error
+    }
+  }
+  throw new Error(`could not allocate a unique operation slug for ${tried}`)
+}
+
+function isErrnoCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code
 }
 
 async function newestMTime(target: string): Promise<number> {
@@ -404,8 +443,7 @@ export async function create(input: {
   target?: string
   opsec?: Opsec
 }): Promise<Info> {
-  const slug = await uniqueSlug(input.workspace, input.label)
-  const dir = opDir(input.workspace, slug)
+  const { slug, dir } = await reserveOperationDir(input.workspace, input.label)
   await mkdir(path.join(dir, "evidence"), { recursive: true })
   const now = new Date()
   const inferredScope = inferredScopeFromTarget(input.target)

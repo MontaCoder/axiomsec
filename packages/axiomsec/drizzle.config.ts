@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { defineConfig } from "drizzle-kit"
 
 export default defineConfig({
@@ -5,6 +7,6 @@ export default defineConfig({
   schema: "./src/**/*.sql.ts",
   out: "./migration",
   dbCredentials: {
-    url: "/tmp/axiomsec-dev.db",
+    url: process.env.AXIOMSEC_DEV_DB ?? join(tmpdir(), "axiomsec-dev.db"),
   },
 })

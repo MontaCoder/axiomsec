@@ -86,13 +86,20 @@ async function uniqueSlug(workspace: string, seed: string): Promise<string> {
   const base = safeSlug(seed)
   const root = rootDir(workspace)
   await mkdir(root, { recursive: true })
-  const existing = new Set(await readdir(root).catch(() => [] as string[]))
-  if (!existing.has(base)) return base
-  for (let i = 2; i < 1000; i++) {
-    const candidate = `${base}-${i}`
-    if (!existing.has(candidate)) return candidate
+  for (let i = 0; i < 1000; i++) {
+    const candidate = i === 0 ? base : `${base}-${i + 1}`
+    try {
+      await mkdir(opDir(workspace, candidate))
+      return candidate
+    } catch (error) {
+      if (!isErrnoCode(error, "EEXIST")) throw error
+    }
   }
   return `${base}-${Date.now()}`
+}
+
+function isErrnoCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code
 }
 
 export async function get(workspace: string, slug: string): Promise<Info | undefined> {
