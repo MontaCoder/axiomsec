@@ -7,6 +7,7 @@ Use this tool to:
 - reject a candidate or finding when it is invalidated.
 
 Promotion rules:
+- every evidence ref must resolve to an artifact in this operation's evidence manifest with matching bytes;
 - a promoted finding must have evidence;
 - replay is strongly preferred for active/reportable findings;
 - if replay is absent, the finding remains evidence-backed but not replay-backed.

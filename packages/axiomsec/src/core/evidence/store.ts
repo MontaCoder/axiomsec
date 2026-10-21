@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, writeFile, stat } from "fs/promises"
 import { createHash } from "crypto"
 import path from "path"
 import { z } from "zod"
+import { withFileLock } from "@/support/lock"
 
 export const Entry = z.object({
   sha256: z.string(),
@@ -48,18 +49,31 @@ async function readManifest(workspace: string, slug: string): Promise<Entry[]> {
     .map((l) => Entry.parse(JSON.parse(l)))
 }
 
+function lockKey(workspace: string, slug: string) {
+  return `evidence:${path.resolve(evidenceDir(workspace, slug))}`
+}
+
 export async function list(workspace: string, slug: string): Promise<Entry[]> {
-  return readManifest(workspace, slug)
+  return withFileLock(lockKey(workspace, slug), () => readManifest(workspace, slug))
 }
 
 export async function get(workspace: string, slug: string, sha256: string): Promise<{ entry: Entry; bytes: Uint8Array } | undefined> {
-  const entries = await readManifest(workspace, slug)
-  const entry = entries.find((e) => e.sha256 === sha256)
-  if (!entry) return undefined
-  const p = path.join(evidenceDir(workspace, slug), `${entry.sha256}.${entry.ext}`)
-  const bytes = await readFile(p).catch(() => undefined)
-  if (!bytes) return undefined
-  return { entry, bytes: new Uint8Array(bytes) }
+  return withFileLock(lockKey(workspace, slug), async () => {
+    const entries = await readManifest(workspace, slug)
+    const entry = entries.find((e) => e.sha256 === sha256)
+    if (!entry) return undefined
+    const p = path.join(evidenceDir(workspace, slug), `${entry.sha256}.${entry.ext}`)
+    const bytes = await readFile(p).catch(() => undefined)
+    if (!bytes) return undefined
+    return { entry, bytes: new Uint8Array(bytes) }
+  })
+}
+
+export async function verify(workspace: string, slug: string, sha256: string): Promise<boolean> {
+  const found = await get(workspace, slug, sha256)
+  if (!found) return false
+  const digest = createHash("sha256").update(found.bytes).digest("hex")
+  return digest === sha256
 }
 
 export async function put(
@@ -86,19 +100,20 @@ export async function put(
     await writeFile(file, bytes)
   }
 
-  const entries = await readManifest(workspace, slug)
-  const already = entries.find((e) => e.sha256 === sha256)
-  if (already) return already
-
-  const entry: Entry = {
-    sha256,
-    ext,
-    size: bytes.length,
-    mime: meta.mime,
-    label: meta.label,
-    source: meta.source,
-    at: Date.now(),
-  }
-  await appendFile(path.join(dir, MANIFEST), JSON.stringify(entry) + "\n", "utf8")
-  return entry
+  return withFileLock(lockKey(workspace, slug), async () => {
+    const current = await readManifest(workspace, slug)
+    const existing = current.find((e) => e.sha256 === sha256)
+    if (existing) return existing
+    const entry: Entry = {
+      sha256,
+      ext,
+      size: bytes.length,
+      mime: meta.mime,
+      label: meta.label,
+      source: meta.source,
+      at: Date.now(),
+    }
+    await appendFile(path.join(dir, MANIFEST), JSON.stringify(entry) + "\n", "utf8")
+    return entry
+  })
 }

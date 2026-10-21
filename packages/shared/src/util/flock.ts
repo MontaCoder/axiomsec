@@ -16,6 +16,10 @@ export namespace Flock {
     global = g
   }
 
+  export function isConfigured() {
+    return global !== undefined
+  }
+
   const root = () => {
     if (!global) throw new Error("Flock global not set")
     return path.join(global.state, "locks")

@@ -27,7 +27,7 @@ const parameters = z.object({
   title: z.string().optional(),
   summary: z.string().optional(),
   severity: z.enum(["critical", "high", "medium", "low", "info"]).optional(),
-  evidence: z.array(z.string()).optional().describe("Evidence SHA-256 refs to attach"),
+  evidence: z.array(z.string()).optional().describe("Evidence SHA-256 refs to attach; each must resolve in this operation's evidence manifest"),
   replay: z.string().optional().describe("Replay bundle or reproduction steps"),
   replay_reason: z.string().optional().describe("Legacy free-form replay exemption reason"),
   replay_exemption_category: z.enum(REPLAY_EXEMPTION_CATEGORIES).optional(),
@@ -261,6 +261,24 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               title: `finding promote · ${params.key}`,
               output: "Structured replay exemptions require both replay_exemption_category and replay_exemption_rationale.",
               metadata: { action: "promote", slug, key: params.key, promoted: false, invalid_replay_input: true },
+            }
+          }
+          const unresolvedEvidence: string[] = []
+          for (const ref of baseEvidenceRefs) {
+            const verified = yield* Effect.promise(() => Evidence.verify(workspace, slug, ref).catch(() => false))
+            if (!verified) unresolvedEvidence.push(ref)
+          }
+          if (unresolvedEvidence.length > 0) {
+            return {
+              title: `finding promote · ${params.key}`,
+              output: `Promotion rejected: evidence refs do not resolve to artifacts in this operation: ${unresolvedEvidence.join(", ")}`,
+              metadata: {
+                action: "promote",
+                slug,
+                key: params.key,
+                promoted: false,
+                unresolved_evidence: unresolvedEvidence,
+              },
             }
           }
           if (params.replay) {

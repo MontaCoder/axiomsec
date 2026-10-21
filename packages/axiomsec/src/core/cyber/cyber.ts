@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import { Operation } from "@/core/operation"
 import { Instance } from "@/project/instance"
+import { withFileLock } from "@/support/lock"
 import { and, asc, Database, desc, eq } from "@/storage"
 import { Effect } from "effect"
 import { CyberFactTable, CyberLedgerTable, CyberRelationTable } from "./cyber.sql"
@@ -486,7 +487,9 @@ async function appendProjectionLine(
 ) {
   const dir = projectionDir(workspace, operation_slug)
   await mkdir(dir, { recursive: true })
-  await appendFile(path.join(dir, filename), JSON.stringify(record) + "\n", "utf8")
+  await withFileLock(`cyber:${path.resolve(dir)}:${filename}`, () =>
+    appendFile(path.join(dir, filename), JSON.stringify(record) + "\n", "utf8"),
+  )
 }
 
 function confidenceLabel(confidence?: number) {
