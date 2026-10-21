@@ -582,6 +582,10 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
                 : new Error(String(e)),
           })
 
+          if (scope.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, scopeReq))
+          }
+
           yield* ctx.ask({
             permission: "scanner",
             patterns: [`${params.mode}:${params.target}`],

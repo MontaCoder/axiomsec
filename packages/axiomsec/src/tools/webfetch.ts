@@ -44,6 +44,10 @@ export const WebFetchTool = Tool.define(
             catch: (e) => (e instanceof ScopeDeniedError ? e : new Error(String(e))),
           })
 
+          if (scope.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, { kind: "url", value: params.url }))
+          }
+
           yield* ctx.ask({
             permission: "webfetch",
             patterns: [params.url],

@@ -31,6 +31,11 @@ export const AgentCommand = cmd({
       .option("params", {
         type: "string",
         description: "Tool params as JSON or a JS object literal",
+      })
+      .option("dangerously-skip-permissions", {
+        type: "boolean",
+        default: false,
+        description: "Allow tools whose permission resolves to ask (disposable workspaces only)",
       }),
   async handler(args) {
     await bootstrap(process.cwd(), async () => {
@@ -56,8 +61,8 @@ export const AgentCommand = cmd({
           process.exit(1)
         }
         const params = parseToolParams(args.params as string | undefined)
-        const ctx = await createToolContext(agent)
-        const result = await tool.execute(params, ctx)
+        const ctx = await createToolContext(agent, Boolean(args["dangerously-skip-permissions"]))
+        const result = await AppRuntime.runPromise(tool.execute(params, ctx))
         process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)
         return
       }
@@ -123,7 +128,7 @@ function parseToolParams(input?: string) {
   return parsed as Record<string, unknown>
 }
 
-async function createToolContext(agent: Agent.Info) {
+async function createToolContext(agent: Agent.Info, skipPermissions: boolean) {
   const { session, messageID } = await AppRuntime.runPromise(
     Effect.gen(function* () {
       const session = yield* Session.Service
@@ -184,6 +189,14 @@ async function createToolContext(agent: Agent.Info) {
           const rule = Permission.evaluate(req.permission, pattern, ruleset)
           if (rule.action === "deny") {
             throw new Permission.DeniedError({ ruleset })
+          }
+          if (rule.action === "ask") {
+            if (!skipPermissions) {
+              throw new Error(
+                `debug agent: permission '${req.permission}' resolves to ask; re-run with --dangerously-skip-permissions on a disposable workspace`,
+              )
+            }
+            process.stderr.write(`debug agent: bypassing ask for ${req.permission} (${pattern})` + EOL)
           }
         }
       })

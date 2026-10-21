@@ -9,6 +9,7 @@ import { Cyber } from "@/core/cyber"
 import { Operation } from "@/core/operation"
 import * as OperationResolver from "@/core/operation/resolver"
 import * as OperationSnapshot from "@/core/operation/snapshot"
+import { redactValue } from "@/core/replay/redact"
 import { Instance } from "@/project/instance"
 
 interface Metadata {
@@ -102,6 +103,22 @@ export function resolveOperationSlug(ctx: Context, workspace: string, explicitSl
 function normalizedSideEffects(metadata: Metadata) {
   const effects = Array.isArray(metadata.side_effects) ? metadata.side_effects.map(String) : []
   return effects
+}
+
+const SECRET_ARG_FIELDS: Record<string, readonly string[]> = {
+  vault: ["value"],
+  identity: ["value"],
+}
+
+function redactToolInput(id: string, args: unknown): unknown {
+  const redacted = redactValue(args, "on")
+  const fields = SECRET_ARG_FIELDS[id]
+  if (!fields || !redacted || typeof redacted !== "object" || Array.isArray(redacted)) return redacted
+  const output: Record<string, unknown> = Object.fromEntries(Object.entries(redacted))
+  for (const field of fields) {
+    if (field in output) output[field] = `[redacted:secret:${field}]`
+  }
+  return output
 }
 
 function sideEffectContract<M extends Metadata>(
@@ -254,7 +271,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               data: {
                 tool: id,
                 call_id: ctx.callID,
-                input: args,
+                input: redactToolInput(id, args),
               },
             })
             .pipe(Effect.catch(() => Effect.succeed("")))
@@ -284,7 +301,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                     tool: id,
                     success: false,
                     error: "tool execution failed",
-                    args,
+                    args: redactToolInput(id, args),
                   }).catch(() => undefined),
                 ).pipe(Effect.catch(() => Effect.succeed(undefined)))
                 if (match) {
@@ -367,7 +384,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                   tool: id,
                   success: true,
                   title: result.title,
-                  args,
+                  args: redactToolInput(id, args),
                 }).catch(() => undefined),
               ).pipe(Effect.catch(() => Effect.succeed(undefined)))
               if (match) {

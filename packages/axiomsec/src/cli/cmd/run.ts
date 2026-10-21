@@ -406,6 +406,14 @@ export const RunCommand = cmd({
     }
 
     async function execute(sdk: AxiomSecClient) {
+      if (args["dangerously-skip-permissions"]) {
+        process.stderr.write(
+          UI.Style.TEXT_DANGER_BOLD +
+            "DANGER: --dangerously-skip-permissions auto-approves every permission request. Use only in a disposable workspace, never against real targets or with real credentials." +
+            UI.Style.TEXT_NORMAL +
+            EOL,
+        )
+      }
       function tool(part: ToolPart) {
         try {
           if (part.tool === "bash") return bash(props<typeof BashTool>(part))

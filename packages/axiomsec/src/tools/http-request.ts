@@ -76,6 +76,10 @@ export const HttpRequestTool = Tool.define(
           })
           const identity = yield* Effect.promise(() => activeIdentity().catch(() => undefined))
 
+          if (scope.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, { kind: "url", value: params.url }))
+          }
+
           yield* ctx.ask({
             permission: "http_request",
             patterns: [params.url],

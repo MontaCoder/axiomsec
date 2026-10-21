@@ -649,6 +649,9 @@ export const AppsecProbeTool = Tool.define<typeof parameters, Metadata, never>(
             try: () => Guard.checkUrl(workspace, origin, slug),
             catch: (e) => (e instanceof ScopeDeniedError ? e : new Error(String(e))),
           })
+          if (scope.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, { kind: "url", value: origin }))
+          }
           yield* ctx.ask({
             permission: "appsec_probe",
             patterns: [origin],

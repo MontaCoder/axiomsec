@@ -8,6 +8,7 @@ import { Cyber } from "@/core/cyber"
 import { Evidence } from "@/core/evidence"
 import { Observation } from "@/core/observation"
 import { activeIdentity } from "@/core/vault"
+import { Guard, ScopeDeniedError } from "@/core/boundary"
 import { Instance } from "@/project/instance"
 
 const parameters = z.object({
@@ -49,6 +50,10 @@ const parameters = z.object({
     .optional()
     .describe("Max output bytes for dom_snapshot / console_log / network_tab / passive_appsec"),
   clear: z.boolean().optional().describe("Drain console/network buffer after read"),
+  ignore_https_errors: z
+    .boolean()
+    .optional()
+    .describe("Accept invalid TLS certificates (default false; enable only for authorized self-signed targets)"),
 })
 
 type Params = z.infer<typeof parameters>
@@ -75,10 +80,11 @@ interface Session {
   console: ConsoleEntry[]
   network: NetworkEntry[]
   lastDom?: string
+  boundary?: { workspace: string; slug?: string }
+  guardCache?: Map<string, Promise<boolean>>
 }
 
 const sessions = new Map<string, Session>()
-let counter = 0
 
 const EVIDENCE_MAX_OUTPUT = 128_000
 
@@ -134,9 +140,13 @@ async function seedStorage(page: any, params: Params) {
     .catch(() => undefined)
 }
 
-async function ensure(abort: AbortSignal): Promise<Session> {
-  const id = `s${counter}`
-  const existing = sessions.get(id)
+async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolean): Promise<Session> {
+  for (const [otherKey, other] of sessions) {
+    if (otherKey === key) continue
+    sessions.delete(otherKey)
+    other.browser.close().catch(() => undefined)
+  }
+  const existing = sessions.get(key)
   if (existing) return existing
 
   let pw: typeof import("playwright") | undefined
@@ -217,12 +227,29 @@ async function ensure(abort: AbortSignal): Promise<Session> {
     }
   }
   const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
+    ignoreHTTPSErrors: ignoreHttpsErrors,
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
   })
   const page = await context.newPage()
   const entry: Session = { browser, context, page, console: [], network: [] }
+
+  await context.route("**/*", async (route: any) => {
+    const url = route.request().url()
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return route.continue()
+    const boundary = entry.boundary
+    // No boundary means no browser run has initialized the session; fail closed.
+    if (!boundary) return route.abort("blockedbyclient")
+    const cached = entry.guardCache?.get(url)
+    const allowed =
+      cached ??
+      Guard.checkUrl(boundary.workspace, url, boundary.slug)
+        .then((decision) => decision.mode === "allow")
+        .catch(() => false)
+    entry.guardCache?.set(url, allowed)
+    if (await allowed) return route.continue()
+    return route.abort("blockedbyclient")
+  })
 
   const MAX_BUFFER = 500
   page.on("console", (msg: any) => {
@@ -261,14 +288,13 @@ async function ensure(abort: AbortSignal): Promise<Session> {
     if (entry.network.length > MAX_BUFFER) entry.network.shift()
   })
 
-  sessions.set(id, entry)
+  sessions.set(key, entry)
 
   abort.addEventListener(
     "abort",
     () => {
-      sessions.delete(id)
+      sessions.delete(key)
       browser.close().catch(() => undefined)
-      counter += 1
     },
     { once: true },
   )
@@ -657,9 +683,16 @@ export function persistBrowserObservation(params: Params, result: Tool.ExecuteRe
   })
 }
 
-async function run(params: Params, abort: AbortSignal): Promise<Tool.ExecuteResult> {
+async function run(
+  params: Params,
+  abort: AbortSignal,
+  boundary: { workspace: string; slug?: string },
+): Promise<Tool.ExecuteResult> {
   const timeout = params.timeout ?? 30_000
-  const session = await ensure(abort)
+  const sessionKey = `${boundary.workspace}\0${boundary.slug ?? ""}\0${params.ignore_https_errors ? "insecure" : "strict"}`
+  const session = await ensure(abort, sessionKey, params.ignore_https_errors ?? false)
+  session.boundary = boundary
+  session.guardCache = new Map()
   const identity = await hydrate(session.context, session.page, params)
   const page = session.page
   const context = session.context
@@ -924,13 +957,30 @@ export const BrowserTool = Tool.define(
       parameters,
       execute: (params: Params, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const workspace = Instance.directory
+          const slug = yield* Tool.resolveOperationSlug(ctx, workspace)
+          const scope = params.url
+            ? yield* Effect.tryPromise({
+                try: () => Guard.checkUrl(workspace, params.url!, slug),
+                catch: (e) => (e instanceof ScopeDeniedError ? e : new Error(String(e))),
+              })
+            : undefined
+          if (scope?.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, { kind: "url", value: params.url! }))
+          }
           yield* ctx.ask({
             permission: "browser",
             patterns: [params.url ?? params.selector ?? params.action],
             always: [],
-            metadata: { action: params.action, url: params.url },
+            metadata: {
+              action: params.action,
+              url: params.url,
+              scope: scope?.mode,
+              scope_reason: scope?.reason,
+              scope_matched: scope?.matched,
+            },
           })
-          const result = yield* Effect.promise(() => run(params, ctx.abort))
+          const result = yield* Effect.promise(() => run(params, ctx.abort, { workspace, slug }))
           yield* persistBrowserObservation(params, result, ctx).pipe(Effect.catch(() => Effect.void))
           return result
         }).pipe(Effect.orDie),

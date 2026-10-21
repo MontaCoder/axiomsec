@@ -4,6 +4,8 @@ import * as net from "node:net"
 import * as dgram from "node:dgram"
 import * as Tool from "./tool"
 import DESCRIPTION from "./net.txt"
+import { Guard, ScopeDeniedError } from "@/core/boundary"
+import { Instance } from "@/project/instance"
 
 const parameters = z.object({
   op: z.enum(["tcp_send", "udp_send", "banner_grab"]),
@@ -108,6 +110,15 @@ export const NetTool = Tool.define<typeof parameters, Metadata, never>(
       parameters,
       execute: (params: Params, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
+          const workspace = Instance.directory
+          const slug = yield* Tool.resolveOperationSlug(ctx, workspace)
+          const scope = yield* Effect.tryPromise({
+            try: () => Guard.checkHost(workspace, params.host, slug),
+            catch: (e) => (e instanceof ScopeDeniedError ? e : new Error(String(e))),
+          })
+          if (scope.mode === "ask") {
+            yield* ctx.ask(Guard.approvalRequest(scope, { kind: "host", value: params.host }))
+          }
           yield* ctx.ask({
             permission: "net",
             patterns: [`${params.op}:${params.host}:${params.port}`],
@@ -116,6 +127,9 @@ export const NetTool = Tool.define<typeof parameters, Metadata, never>(
               op: params.op,
               host: params.host,
               port: params.port,
+              scope: scope.mode,
+              scope_reason: scope.reason,
+              scope_matched: scope.matched,
             },
           })
           const buf = yield* Effect.tryPromise({

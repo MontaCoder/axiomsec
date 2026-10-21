@@ -128,3 +128,18 @@ export async function checkHost(workspace: string, host: string, operationSlug?:
 export async function checkPath(workspace: string, path: string, operationSlug?: string): Promise<Decision> {
   return check(workspace, { kind: "path", value: path }, operationSlug)
 }
+
+export function approvalRequest(decision: Decision, request: Request) {
+  return {
+    permission: "scope",
+    patterns: [request.value],
+    always: [],
+    metadata: {
+      scope: decision.mode,
+      reason: decision.reason,
+      matched: decision.matched,
+      kind: request.kind,
+      value: request.value,
+    },
+  }
+}

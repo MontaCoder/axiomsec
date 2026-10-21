@@ -26,6 +26,7 @@ Parameters:
 - session_storage: Key-value pairs to seed into sessionStorage
 - max_bytes: Output byte cap for dom_snapshot/console_log/network_tab/dom_diff/passive_appsec (default 65536)
 - clear: Drain the console/network buffer after read
+- ignore_https_errors: Accept invalid TLS certificates (default false; enable only for authorized self-signed targets)
 
 Use this tool for:
 - Testing SPAs that require JavaScript rendering

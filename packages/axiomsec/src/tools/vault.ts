@@ -31,22 +31,28 @@ export const VaultTool = Tool.define<typeof parameters, Metadata, never>(
     return {
       description: DESCRIPTION,
       parameters,
-      execute: (params: Params, _ctx: Tool.Context<Metadata>) =>
+      execute: (params: Params, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
           const vault = yield* Effect.promise(() => loadVault())
 
           if (params.action === "set") {
             if (!params.key || params.value === undefined) throw new Error("set requires key and value")
+            yield* ctx.ask({
+              permission: "vault",
+              patterns: [params.key],
+              always: [],
+              metadata: { action: "set", key: params.key },
+            })
             vault.secrets[params.key] = { value: params.value, updated_at: new Date().toISOString() }
             yield* Effect.promise(() => saveVault(vault))
-            const slug = yield* Tool.resolveOperationSlug(_ctx, Instance.directory)
+            const slug = yield* Tool.resolveOperationSlug(ctx, Instance.directory)
             yield* Cyber.appendLedger({
               operation_slug: slug,
               kind: "operation.note",
               source: "vault",
               summary: `vault set ${params.key}`,
-              session_id: _ctx.sessionID,
-              message_id: _ctx.messageID,
+              session_id: ctx.sessionID,
+              message_id: ctx.messageID,
               data: { action: "set", key: params.key },
             }).pipe(Effect.catch(() => Effect.void))
             return {
@@ -61,6 +67,12 @@ export const VaultTool = Tool.define<typeof parameters, Metadata, never>(
             const entry = vault.secrets[params.key]
             if (!entry) throw new Error(`unknown key: ${params.key}`)
             if (params.reveal) {
+              yield* ctx.ask({
+                permission: "vault",
+                patterns: [params.key],
+                always: [],
+                metadata: { action: "get", key: params.key, reveal: true },
+              })
               return {
                 title: `get ${params.key} (revealed)`,
                 output: entry.value,
@@ -87,6 +99,12 @@ export const VaultTool = Tool.define<typeof parameters, Metadata, never>(
           if (params.action === "delete") {
             if (!params.key) throw new Error("delete requires key")
             if (!(params.key in vault.secrets)) throw new Error(`unknown key: ${params.key}`)
+            yield* ctx.ask({
+              permission: "vault",
+              patterns: [params.key],
+              always: [],
+              metadata: { action: "delete", key: params.key },
+            })
             const descriptor = summarizeDescriptor(vault.secrets[params.key]!.value)
             delete vault.secrets[params.key]
             const wasActive = vault.active_identity === params.key
@@ -95,14 +113,14 @@ export const VaultTool = Tool.define<typeof parameters, Metadata, never>(
               vault.active_identity_set_at = null
             }
             yield* Effect.promise(() => saveVault(vault))
-            const slug = yield* Tool.resolveOperationSlug(_ctx, Instance.directory)
+            const slug = yield* Tool.resolveOperationSlug(ctx, Instance.directory)
             const eventID = yield* Cyber.appendLedger({
               operation_slug: slug,
               kind: "operation.note",
               source: "vault",
               summary: `vault delete ${params.key}`,
-              session_id: _ctx.sessionID,
-              message_id: _ctx.messageID,
+              session_id: ctx.sessionID,
+              message_id: ctx.messageID,
               data: { action: "delete", key: params.key },
             }).pipe(Effect.catch(() => Effect.succeed("")))
             yield* Cyber.upsertFact({
@@ -140,19 +158,25 @@ export const VaultTool = Tool.define<typeof parameters, Metadata, never>(
             if (!params.key) throw new Error("use_as requires key")
             if (!(params.key in vault.secrets))
               throw new Error(`unknown key: ${params.key} (store it first with action=set)`)
+            yield* ctx.ask({
+              permission: "vault",
+              patterns: [params.key],
+              always: [],
+              metadata: { action: "use_as", key: params.key },
+            })
             const previous = vault.active_identity
             vault.active_identity = params.key
             vault.active_identity_set_at = new Date().toISOString()
             yield* Effect.promise(() => saveVault(vault))
             const descriptor = summarizeDescriptor(vault.secrets[params.key]!.value)
-            const slug = yield* Tool.resolveOperationSlug(_ctx, Instance.directory)
+            const slug = yield* Tool.resolveOperationSlug(ctx, Instance.directory)
             const eventID = yield* Cyber.appendLedger({
               operation_slug: slug,
               kind: "fact.observed",
               source: "vault",
               summary: `active identity set to ${params.key}`,
-              session_id: _ctx.sessionID,
-              message_id: _ctx.messageID,
+              session_id: ctx.sessionID,
+              message_id: ctx.messageID,
               data: { action: "use_as", key: params.key, previous, mode: descriptor.mode },
             }).pipe(Effect.catch(() => Effect.succeed("")))
             if (previous && previous !== params.key) {

@@ -110,6 +110,18 @@ export namespace Agent {
           const defaults = Permission.fromConfig({
             "*": "allow",
             doom_loop: "ask",
+            bash: "ask",
+            net: "ask",
+            scanner: "ask",
+            http_request: "ask",
+            browser: "ask",
+            webfetch: "ask",
+            websearch: "ask",
+            appsec_probe: "ask",
+            vault: "ask",
+            identity: "ask",
+            share: "ask",
+            scope: "ask",
             external_directory: {
               "*": "ask",
               ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),

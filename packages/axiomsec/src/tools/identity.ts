@@ -90,6 +90,12 @@ export const IdentityTool = Tool.define<typeof parameters, Metadata, never>(
           }
 
           if (params.action === "clear") {
+            yield* ctx.ask({
+              permission: "identity",
+              patterns: [vault.active_identity ?? "clear"],
+              always: [],
+              metadata: { action: "clear", previous: vault.active_identity },
+            })
             const previous = vault.active_identity
             vault.active_identity = null
             vault.active_identity_set_at = null
@@ -140,6 +146,12 @@ export const IdentityTool = Tool.define<typeof parameters, Metadata, never>(
                 metadata: { action: "add", key: params.key },
               }
             }
+            yield* ctx.ask({
+              permission: "identity",
+              patterns: [params.key],
+              always: [],
+              metadata: { action: "add", key: params.key },
+            })
             vault.secrets[params.key] = { value: params.value, updated_at: new Date().toISOString() }
             yield* Effect.promise(() => saveVault(vault))
             const descriptor = summarizeDescriptor(params.value)
@@ -190,6 +202,12 @@ export const IdentityTool = Tool.define<typeof parameters, Metadata, never>(
               metadata: { action: "use", key: params.key, found: false },
             }
           }
+          yield* ctx.ask({
+            permission: "identity",
+            patterns: [params.key],
+            always: [],
+            metadata: { action: "use", key: params.key },
+          })
           const previous = vault.active_identity
           vault.active_identity = params.key
           vault.active_identity_set_at = new Date().toISOString()
