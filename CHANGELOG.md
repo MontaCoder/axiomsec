@@ -39,6 +39,8 @@ behavior changes.
   lite repo no longer fails its release gate on zero tests.
 - The npm publish job no longer references a missing `postinstall.mjs`; the
   launcher resolves the platform binary from its optional dependency.
+- `@axiomsec/shared` now declares `glob`, so clean Linux installs can
+  typecheck without relying on a hoisted transitive dependency.
 - Release-note extraction now strips the optional date after a changelog
   version header.
 

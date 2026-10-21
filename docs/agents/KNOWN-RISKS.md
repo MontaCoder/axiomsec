@@ -218,6 +218,17 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Fix direction:** Add real tests and remove the lite-repo caveat when the test harness exists.
 **Related:** `RISK-CI-01`, `V-S8`, `VERIFICATION.md`.
 
+### RISK-CI-02 — Clean-install typecheck failed on an undeclared `glob` dependency
+
+**Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence:** The Release workflow failed at `bun typecheck` with `packages/shared/src/util/glob.ts(1,50): error TS2307: Cannot find module 'glob' or its corresponding type declarations.` Local Windows checks passed because `glob` was hoisted from `packages/axiomsec`.
+**Why it matters:** A clean Linux install must not rely on a sibling package’s transitive dependency; the release failed before any artifact was built.
+**Fix:** `packages/shared/package.json` now declares `"glob": "13.0.5"` and the lockfile workspace entry matches. `bun install --frozen-lockfile` and `bun turbo typecheck` pass.
+**Re-verify:** `bun install --frozen-lockfile`; `bun turbo typecheck --force`; confirm `glob` is in `packages/shared/package.json` dependencies.
+**Safe check:** Local verification only.
+**Fix direction:** Declare every imported package in the package that imports it; do not rely on workspace hoisting.
+**Related:** `RISK-CI-01`, `V-S8`.
+
 ### RISK-RELEASE-02 — Release referenced a missing postinstall script
 
 **Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21
