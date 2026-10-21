@@ -35,6 +35,7 @@ acp ──stdio──> ACP agent
 ```
 
 - The default CLI command starts the TUI; the TUI thread spawns a worker, and the worker serves the Hono app **in-process** through RPC `fetch` (`packages/axiomsec/src/cli/cmd/tui/worker.ts:45-63`), not a localhost port.
+- TUI RPC calls are queued until the worker posts `rpc.ready`; the client pings until it receives one, so calls issued while the worker is still evaluating its module are not dropped (`packages/axiomsec/src/support/rpc.ts`). Worker requests dispatch concurrently and failures reject the pending call.
 - Headless `serve` uses `Server.listen` (`packages/axiomsec/src/server/server.ts:61`) with loopback and a random port by default (`packages/axiomsec/src/cli/network.ts:5-15`). `attach` talks HTTP to a running server.
 - The typed SDK is `packages/sdk/src/v2/client.ts`; generated client code is `packages/sdk/src/v2/gen/*` and must not be hand-edited.
 - ACP lives in `packages/axiomsec/src/acp/agent.ts` and `packages/axiomsec/src/cli/cmd/acp.ts`; MCP management and OAuth live in `packages/axiomsec/src/mcp/`.

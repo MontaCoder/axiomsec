@@ -74,6 +74,9 @@ Boot / TUI
 ├─ UI starts but no model
 │  → providers/models; auth; AXIOMSEC_DISABLE_MODELS_FETCH; model picker
 │  → layer: providers / auth / config
+├─ UI clears to black and onboarding never appears
+│  → initial sync RPCs lost before the worker listener; check the `rpc.ready` queue and ping in support/rpc.ts; SyncProvider stays `loading`
+│  → layer: TUI RPC / worker startup
 └─ worker or server failure
    → tui/worker.ts; Server.listen; attach; port/password
    → layer: TUI worker / server
