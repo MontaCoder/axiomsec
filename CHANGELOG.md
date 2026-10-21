@@ -41,6 +41,8 @@ behavior changes.
   launcher resolves the platform binary from its optional dependency.
 - `@axiomsec/shared` now declares `glob`, so clean Linux installs can
   typecheck without relying on a hoisted transitive dependency.
+- `axiomsec` now declares `gitlab-ai-provider`, so clean installs and builds
+  resolve the GitLab provider instead of relying on a hoisted package.
 - Release-note extraction now strips the optional date after a changelog
   version header.
 

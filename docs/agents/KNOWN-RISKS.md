@@ -229,6 +229,17 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Fix direction:** Declare every imported package in the package that imports it; do not rely on workspace hoisting.
 **Related:** `RISK-CI-01`, `V-S8`.
 
+### RISK-CI-03 — Clean-install typecheck failed on an undeclared GitLab provider import
+
+**Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21
+**Evidence:** After fixing `glob`, the Release workflow still failed at `bun typecheck` with `packages/axiomsec/src/providers/provider.ts(507,46): error TS2307: Cannot find module 'gitlab-ai-provider'`; the build failed on the same missing module. The package was present only in a local hoisted `node_modules`.
+**Why it matters:** The GitLab provider is imported by `provider.ts`; clean installs could not typecheck or bundle it, blocking release artifacts.
+**Fix:** `packages/axiomsec/package.json` now declares `"gitlab-ai-provider": "6.22.0"` and the lockfile includes it with its transitive dependencies. `bun install --frozen-lockfile --linker isolated` followed by `bun turbo typecheck --force` and the single-platform build pass with Bun 1.3.11.
+**Re-verify:** `bun install --frozen-lockfile --linker isolated`; `bun turbo typecheck --force`; `bun run --cwd packages/axiomsec build --single --skip-install`.
+**Safe check:** Local build only.
+**Fix direction:** Declare every provider SDK that `provider.ts` imports; do not rely on hoisting.
+**Related:** `RISK-CI-01`, `RISK-CI-02`, `V-S8`.
+
 ### RISK-RELEASE-02 — Release referenced a missing postinstall script
 
 **Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21

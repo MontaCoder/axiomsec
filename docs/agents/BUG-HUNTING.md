@@ -34,7 +34,7 @@ Audit in this order: highest blast radius first.
 | 4 | Secrets/egress | Can headers/cookies/API keys leak into ledger, evidence, share, or logs? | `RISK-SECRET-01`, `RISK-SECRET-02` | `V-S6` |
 | 5 | Persistence/concurrency | Can concurrent writers, slug collisions, or migration failures corrupt state? | `RISK-PERSIST-01`, `RISK-PERSIST-02`, `RISK-PERSIST-03` | `V-S2`, `V-S4` |
 | 6 | Timeouts/cancellation | Can any network/subprocess call hang the loop? | `RISK-TIME-01` | `V-S8` |
-| 7 | Build/release/generated | Can a green build/release hide a broken artifact or missing file? | `RISK-BUILD-01`, `RISK-BUILD-02`, `RISK-BUILD-03`, `RISK-CI-02`, `RISK-RELEASE-01`, `RISK-RELEASE-02` | `V-S8` |
+| 7 | Build/release/generated | Can a green build/release hide a broken artifact or missing file? | `RISK-BUILD-01`, `RISK-BUILD-02`, `RISK-BUILD-03`, `RISK-CI-02`, `RISK-CI-03`, `RISK-RELEASE-01`, `RISK-RELEASE-02` | `V-S8` |
 | 8 | Docs/lint | Does documentation send agents down the wrong path? | `RISK-DOC-01`, `RISK-DOC-02`, `RISK-LINT-01`, `RISK-CI-01` | `V-S1` |
 
 ## 3. Command bank
