@@ -61,7 +61,7 @@ All surfaces converge on the session loop, tool registry, and cyber kernel. Ther
 2. The loop handles pending compaction/subtasks, resolves the agent/model/variant, creates the assistant message, resolves tools (`:338`), injects skills/environment/instructions/operation context, and calls the processor.
 3. `LLM.stream` (`packages/axiomsec/src/session/llm.ts:23`) wraps `streamText` (`:249`), assembles the system prompt, merges provider/agent/variant options, and filters the model-visible tools.
 4. `SessionProcessor.process` (`packages/axiomsec/src/session/processor.ts:634`) drains the stream. `handleEvent` (`:252`) turns events into text/reasoning/tool/step parts, detects doom loops, updates usage/snapshots, applies plugin text transforms, and retries through `SessionRetry` (`:669`); cleanup always runs (`:682`).
-5. Tool execution: `ToolRegistry` assembles built-ins, custom file tools, and plugin tools (`packages/axiomsec/src/tools/registry.ts:236-336`); the model sees a filtered subset. Every tool call passes through `Tool.wrap` (`packages/axiomsec/src/tools/tool.ts:205-450`), which resolves the operation, validates args, appends ledger events, updates workflow progress, refreshes the context pack, and truncates output.
+5. Tool execution: `ToolRegistry` assembles built-ins, custom file tools, and plugin tools (`packages/axiomsec/src/tools/registry.ts:236-336`); the model sees a filtered subset. A `deny` rule removes the tool from that subset (`Permission.disabled`). Every tool call passes through `Tool.wrap` (`packages/axiomsec/src/tools/tool.ts:205-465`), which resolves the operation, validates and **applies** the parsed args (including Zod defaults/coercions), appends ledger events, updates workflow progress, refreshes the context pack, and truncates output. Plugin and config-file tools are wrapped through `Tool.wrapDef` so they get the same treatment; MCP tools are ledgered in `session/prompt.ts`.
 6. Plugin hooks wrap execution before/after (`packages/axiomsec/src/session/prompt.ts:399-418`).
 
 **Contract:** the tool implements validate → guard → ask → execute. The wrapper owns audit, workflow, context refresh, and truncation. A tool that bypasses the wrapper loses those behaviors.
@@ -88,6 +88,8 @@ Operation directory layout:
 .axiomsec/operation/active    marker file containing the active slug
 ```
 
+A slug is always a single directory name under `.axiomsec/operation/`; `packages/axiomsec/src/core/operation/slug.ts` validates it and asserts containment for every path primitive.
+
 Operation resolution precedence: explicit slug → session binding → session attachment → workspace default → none (`packages/axiomsec/src/core/operation/resolver.ts:42-61`). Creation infers scope from the target hostname (`packages/axiomsec/src/core/operation/operation.ts:104-111`); a targetless operation starts with an empty scope.
 
 Kernel writes: `Cyber.appendLedger` (`packages/axiomsec/src/core/cyber/cyber.ts:1193`), `upsertFact` (`:1245`), `syncWorkflowProgress` (`:1004`). Projection JSONL appends happen at `packages/axiomsec/src/core/cyber/cyber.ts:489`, after DB writes; projection failures are allowed to fail silently in several paths.
@@ -98,7 +100,7 @@ Operation creation writes initial facts/ledger/relations with whole-file writes 
 
 - **Evidence**: `<sha256>.<ext>` plus append-only `manifest.jsonl` (`packages/axiomsec/src/core/evidence/store.ts:17`, `:55-103`). `get` returns the manifest entry and bytes but does not re-hash them.
 - **Replay**: `axiomsec/1` header/event/trailer; trailer carries `sha256_body` and an optional signature (`packages/axiomsec/src/core/replay/format.ts:7-42`). CLI `verify` checks the body hash only; signature verification is not implemented (`packages/axiomsec/src/cli/cmd/replay.ts:93-113`).
-- **Findings**: promotion requires evidence refs; the oracle passes only with evidence plus replay or a structured, domain-valid exemption (`packages/axiomsec/src/core/cyber/oracle.ts:66-133`). Reportability is defined at `packages/axiomsec/src/core/cyber/finding.ts:189-194`; rejected/stale claims remain visible.
+- **Findings**: promotion requires independent evidence — a ref that resolves and re-hashes through `Evidence.verify` — plus replay or a structured, domain-valid exemption (`packages/axiomsec/src/core/cyber/oracle.ts:66-133`). The replay artifact is tracked separately and never counts as evidence. Reportability is defined at `packages/axiomsec/src/core/cyber/finding.ts:189-194`; rejected/stale claims remain visible and candidates are bucketed separately from suspected findings.
 - **Reports**: deliverable bundles contain `report.md`, `report.json`, `manifest.json`, and `manifest.sha256` (`packages/axiomsec/src/core/deliverable/build.ts:422-596`).
 - **Share**: copies evidence/cyber/workflow/context, writes a per-file manifest, redacts structured JSON/JSONL and text extensions (JWT, auth/cookie headers, secret keys), optionally signs, and tars the staging directory (`packages/axiomsec/src/tools/share.ts:118-243`).
 - **Important gap:** finding promotion accepts arbitrary evidence-ref strings; it does not verify that the hash exists or that the bytes match (`packages/axiomsec/src/tools/finding.ts:245-309`). See `KNOWN-RISKS.md` `RISK-PROOF-01`.
@@ -113,15 +115,16 @@ Operation creation writes initial facts/ledger/relations with whole-file writes 
 
 ## 8. Boundaries and permissions
 
-- Permission rules are last-match wildcard rules (`packages/axiomsec/src/permissions/evaluate.ts:9-15`); when nothing matches, the action is `ask`.
-- Built-in agents start from `"*": "allow"` and add explicit asks for `http_request` and `browser` only (`packages/axiomsec/src/agent/agent.ts:110-127`, `:143-144`, `:166-167`, `:189-190`, `:213-214`, `:248-249`). User config merges last.
+- Permission rules are last-match wildcard rules (`packages/axiomsec/src/permissions/evaluate.ts:9-15`); when nothing matches, the action is `ask`. Resolution order is live ruleset first, then a stored “always” approval; an explicit `deny` always wins and removes the tool from the registry.
+- Built-in agents start from `"*": "allow"` and add explicit asks for network, shell, secret, MCP and operation-record tools (`packages/axiomsec/src/agent/agent.ts:110-140`, `:143-144`, `:166-167`, `:189-190`, `:213-214`, `:248-249`). User config merges last.
 - `ctx.ask` is plumbed from the session loop (`packages/axiomsec/src/session/prompt.ts:374`); approvals can be “once” or “always” and are persisted per project.
 - Guard (`packages/axiomsec/src/core/boundary/guard.ts:87-118`):
   - No active operation → `allow` (`:89`).
   - Strict opsec blocks third-party intel hosts (`:19-26`).
   - Explicit deny throws `ScopeDeniedError` (`:103-117`).
   - `ask` is **returned**, not thrown; the caller decides what to do next.
-- Guard coverage today: `http_request`, `webfetch`, `scanner`, `appsec_probe` call it. `browser`, `net`, and `bash` do not. The boundary check is a per-tool convention, not a runtime choke point.
+- Scheme-qualified boundary patterns compare protocol, hostname (wildcards allowed), effective port, and then a path prefix/glob (`packages/axiomsec/src/core/boundary/evaluate.ts:13-46`); raw URL prefix matching is not used.
+- Guard coverage today: `http_request`, `webfetch`, `scanner`, `appsec_probe`, `browser`, and `net` call it. HTTP(S) redirects are re-checked hop-by-hop by `packages/axiomsec/src/tools/guarded-http.ts`; scanner crawl/JS subresources go through an `allowUrl` callback (`packages/axiomsec/src/scanners/http.ts`); browser WebSocket handshakes are checked by `context.routeWebSocket` (`packages/axiomsec/src/tools/browser.ts:256-269`). `bash` remains unguarded (`RISK-SCOPE-03`). The boundary check is a per-tool convention, not a runtime choke point.
 - `debug agent` executes a tool without an LLM call; ask-level tools require `--dangerously-skip-permissions` and print each bypass (`packages/axiomsec/src/cli/cmd/debug/agent.ts:35-38,190-200`). `run --dangerously-skip-permissions` auto-approves every ask (`packages/axiomsec/src/cli/cmd/run.ts:544-548`).
 
 ## 9. Server, API, SDK, ACP

@@ -35,6 +35,38 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Fix direction:** Enforce scope in a shared execution choke point (sandbox/proxy/network namespace). Do not rely on scraping URLs out of arbitrary commands.
 **Related:** `RISK-SCOPE-01`, `RISK-SCOPE-02`, `RISK-PERM-01`, `RISK-PERM-03`, `V-S3`.
 
+### RISK-SCOPE-04 — Scheme scope patterns matched by raw string prefix
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/boundary/evaluate.ts:18` returned `u.origin === pattern || req.value.startsWith(pattern)`. With `in_scope: ["https://example.com"]`, both `https://example.com.evil.test/` and `https://example.com@evil.test/` returned `allow` because the raw URL started with the allowed origin string.
+**Why it matters:** Any operator or migrated notebook scope using a scheme-qualified pattern could be bypassed by a hostname that merely starts with the allowed origin, defeating the boundary before any tool-level check.
+**Fix:** `evaluate.ts:13-40` parses the pattern, compares protocol, hostname (including `*.` wildcards), and effective port, then applies path-prefix or path-glob matching. The raw `startsWith` check is gone.
+**Reproduction (post-fix):** `evaluate({ default: "ask", in_scope: ["https://example.com"] }, { kind: "url", value: "https://example.com.evil.test/" })` returns `ask`; exact origin and path-prefix cases still return `allow`.
+**Re-verify:** `VERIFICATION.md` §V-S12.
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-01`, `V-S12`.
+
+### RISK-SCOPE-05 — Redirects and discovered subresources bypassed scope
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `http_request` and `webfetch` checked only the initial URL, then used `FetchHttpClient`'s automatic redirects. `scanner`'s `crawl`/`js-analyzer` used bare `fetch`, and sitemap URLs were queued without a boundary check. End-to-end with strict opsec and `in_scope: ["127.0.0.1"]`: `http_request http://127.0.0.1:19081/start` followed a 302 to `http://127.0.0.2:19183/landed` and returned `OUT-OF-SCOPE-HIT`; a crawl of the same target reached 127.0.0.2.
+**Why it matters:** An in-scope URL that redirects, or a target that references external scripts/sitemaps, turns every guarded tool into an unguarded egress path. This is the redirect re-check lead that was previously unverified.
+**Fix:** `packages/axiomsec/src/tools/guarded-http.ts:1-79` sets `redirect: "manual"`, checks every hop with `Guard.checkUrl`, requests the separate `scope` permission on `ask`, and strips credentials on cross-origin hops; `http-request.ts:110-120` and `webfetch.ts:93-103` use it. `packages/axiomsec/src/scanners/http.ts` adds `fetchGuarded`; `crawl.ts:170-215`, `js-analyzer.ts:137-166`, and `scanner.ts:602-622` pass an `allowUrl` callback that permits explicitly in-scope URLs and the operator-approved target's origin and path subtree.
+**Reproduction (post-fix):** with strict opsec and a loopback 302 fixture, `http_request` and `webfetch` exit 1 with `out of scope: url=http://127.0.0.2:19183/landed` and the out-of-scope fixture receives no request; the in-scope crawl control still lists its page.
+**Residual:** redirects are capped at 10 (`http_request`/`webfetch`) and 5 (scanner); scanner subresources that resolve to boundary `ask` are skipped rather than prompted, matching the browser route behavior.
+**Re-verify:** `VERIFICATION.md` §V-S12; loopback fixtures only.
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-01`, `RISK-NET-01`, `V-S3`, `V-S12`.
+
+### RISK-SCOPE-06 — Browser WebSockets escaped the HTTP route guard
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/browser.ts` installed `context.route("**/*")`, which covers HTTP(S) but not WebSocket handshakes. A page loaded from `127.0.0.1` opened `ws://127.0.0.2:19184`; the out-of-scope fixture logged `WS-HIT OUT-OF-SCOPE-WS`.
+**Why it matters:** A target page could exfiltrate data over a socket even while every HTTP request and navigation was boundary-checked.
+**Fix:** `browser.ts:256-269` installs `context.routeWebSocket` for every socket URL, calls `connectToServer()` only when `Guard.checkUrl` returns `allow`, and closes with code 1008 otherwise.
+**Reproduction (post-fix):** with a clean loopback WebSocket fixture, the navigation succeeds but the fixture logs only its startup line (no `WS-OPEN`/`WS-HIT`).
+**Residual:** WebRTC data channels, DNS prefetch/preconnect, and other non-HTTP browser mechanisms are not intercepted; see the lead below.
+**Re-verify:** `VERIFICATION.md` §V-S12; loopback fixtures and Chromium only.
+**Related:** `SEC-01`, `SEC-02`, `RISK-NET-01`, `V-S12`.
+
 ### RISK-SCOPE-02 — Boundary `ask` is not an independent approval
 
 **Status:** fixed 2026-10-21 · **Severity:** critical · **Verified:** 2026-10-21
@@ -78,6 +110,26 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Re-verify:** `VERIFICATION.md` §V-S6; build with `redact:true`, then `redact:false` as a control.
 **Related:** `SEC-06`, `RISK-SECRET-02`, `V-S6`.
 
+### RISK-PROOF-03 — A finding could self-certify with its own replay text
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/finding.ts` stored the model-authored `replay` string as an evidence artifact and pushed its SHA into the *same* `evidenceRefs` array that satisfied the evidence gate; `replay_present: Boolean(replayRef)` then satisfied the replay half. `packages/axiomsec/src/core/cyber/oracle.ts:77-83` is `evidence_present && (replay_present || exemption_valid)`, so one model sentence satisfied both halves of the AND.
+**Why it matters:** the proof-first design collapsed. The agent could promote a fabricated claim to `status: verified` / `oracle: passed` and into the reportable bucket of `report.md` with no artifact of its own.
+**Fix:** the replay artifact is tracked separately (`replay_ref`, a `replay_bundle` fact, a `backed_by → replay_artifact` relation) and is never part of `evidence_refs`. Promotion requires at least one independently supplied ref that resolves through `Evidence.verify`, and then asks for approval.
+**Reproduction (pre-fix):** `axiomsec debug agent security --tool finding --params '{"action":"promote","key":"self-certified","replay":"trust me"}'` returned `status: verified`, `oracle: passed`, `evidence: <sha of "trust me">`. Post-fix the same call returns `Promotion requires at least one evidence reference …`, `promoted: false`, and `finding status` reports `found: false`.
+**Re-verify:** `VERIFICATION.md` `V-S13`; `packages/axiomsec/test/core/cyber/finding.test.ts`.
+**Related:** `SEC-05`, `RISK-PROOF-01`, `RISK-PROOF-04`, `V-S4`, `V-S13`.
+
+### RISK-SCOPE-07 — A model-supplied operation slug escaped the operation tree
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/operation/operation.ts` `opDir()` = `path.join(rootDir(workspace), slug)` with no validation; `packages/axiomsec/src/tools/tool.ts` `resolveOperationSlug` returned an explicit slug verbatim; `packages/axiomsec/src/tools/workspace.ts` passed the model's own `params.slug` (`z.string().optional()`) straight through; `packages/axiomsec/src/core/evidence/store.ts` `evidenceDir` + `mkdir(recursive)` created trees outside `.axiomsec/operation/`.
+**Why it matters:** a tool argument could redirect evidence, ledger and fact writes to any directory the process could write to, escaping the operation sandbox and the audit boundary.
+**Fix:** `packages/axiomsec/src/core/operation/slug.ts` holds the slug rules (`isValidSlug`, `containedPath`). `opDir`, `Evidence.evidenceDir` and `Deliverable.build` assert containment; `Operation.read`/`activate`/`activeSlug` reject malformed slugs; `resolveOperationSlug` and `explicitOperationSlug` filter them; the `workspace` tool reports an invalid slug instead of acting on it.
+**Reproduction (pre-fix):** `axiomsec debug agent security --tool workspace --params '{"action":"rename","slug":"../..","label":"TRAVERSAL-CANARY"}'` wrote `<workspace>/cyber/ledger.jsonl` and `<workspace>/cyber/facts.jsonl` and reported success. Post-fix it returns `Invalid operation slug: "../.."` and creates nothing outside `.axiomsec/operation/`.
+**Re-verify:** `VERIFICATION.md` `V-S13`; `packages/axiomsec/test/core/operation/slug.test.ts`.
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-01`, `RISK-PATH-01`, `V-S13`.
+
 ## High
 
 ### RISK-PERM-02 — `debug agent` turns `ask` into allow
@@ -102,6 +154,49 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Safe check:** Read-only inspection; do not run it against a real workspace.
 **Fix direction:** If stronger containment is required, require an additional environment opt-in or a disposable-workspace marker.
 **Related:** `SEC-03`, `RISK-PERM-01`, `V-S3`.
+
+### RISK-TOOL-02 — Tool wrapper validated arguments but executed raw ones
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/tool.ts:252-263` called `toolInfo.parameters.parse(args)` only for validation and discarded the result, then executed the raw `args`. Zod `.default()` and `.coerce()` values were never applied.
+**Why it matters:** Tool behavior depended on the model sending every field. `finding` with only `{ "key": "x" }` skipped the documented `action: "list"` default and fell through to the promotion branch; `http_request` without `method` built `curl -X undefined`; `evidence` without `action` could not list.
+**Fix:** `tool.ts:252-278` binds `validatedArgs` and uses it for the ledger, workflow trace, and `execute`; the parsed value now reaches the tool.
+**Reproduction (post-fix):** `debug agent security --tool finding --params '{"key":"defaults-probe"}'` returns `action: list`, title `finding · 0`, and does not attempt promotion.
+**Re-verify:** `VERIFICATION.md` §V-S12.
+**Related:** `ENG-04`, `RISK-TOOL-01`, `V-S3`, `V-S12`.
+
+### RISK-PERM-05 — `evidence add_file` bypassed read and external-directory checks
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/evidence.ts` passed `params.path` directly to `Evidence.put` with no `ctx.ask`, no external-directory check, and no `.env` read rule; `evidence` also resolved to `"*": "allow"`. A model could copy `.env` or any absolute path into immutable evidence, which reports and share bundles then expose.
+**Why it matters:** The read tool protects `.env` and outside-workspace paths; evidence was a quieter path around both protections.
+**Fix:** `evidence.ts:246-257` resolves the path against the workspace, calls `assertExternalDirectoryEffect`, then asks the `read` permission (the `.env` rules apply) before `Evidence.put`. `binary-triage.ts:90-100` and `iac-triage.ts:98-109` received the same external-directory plus `read` gate because they also accept user paths.
+**Reproduction (post-fix):** `debug agent security --tool evidence --params '{"action":"add_file","path":".env"}'` exits 1 with `permission 'read' resolves to ask`; with `--dangerously-skip-permissions` it prints the bypass and stores the artifact.
+**Residual:** `cloud_posture` and `container_surface` may read provider/container configuration outside the workspace without an equivalent gate; see the lead below.
+**Re-verify:** `VERIFICATION.md` §V-S12; canary `.env` only.
+**Related:** `SEC-03`, `SEC-06`, `RISK-PERM-04`, `V-S12`.
+
+### RISK-PERM-06 — `interact` spawned and egressed without a permission request
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/interact.ts` called no `ctx.ask`; `interact` was not in the sensitive default set (`packages/axiomsec/src/agent/agent.ts:110-127`), so `generate` could start `interactsh-client` and `close` could kill a recorded PID without a prompt.
+**Why it matters:** A tool that starts a third-party network process or terminates one is a side effect under `SEC-03`; the human control was absent.
+**Fix:** `interact.ts:90-97` asks the `interact` permission for the requested op, and `agent.ts:121` defaults `interact` to `ask`.
+**Reproduction (post-fix):** `debug agent hacking --tool interact --params '{"op":"poll","id":"none"}'` exits 1 with `permission 'interact' resolves to ask`; with the test-only bypass it proceeds to the unknown-session error.
+**Residual:** the interactsh host is tooling egress, not target traffic, and is not checked against the operation boundary or the strict opsec blocklist.
+**Re-verify:** `VERIFICATION.md` §V-S3/V-S12; do not install or run interactsh against a real target.
+**Related:** `SEC-03`, `RISK-SCOPE-03`, `RISK-PERM-01`, `V-S12`.
+
+### RISK-TIME-02 — Triage subprocesses had no timeout
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/process.ts:3-11` used a bare `Bun.spawn` with no timeout; `binary_triage`, `iac_triage`, `cloud_posture`, and `container_surface` all call it, so a hung adapter stalled the agent loop indefinitely.
+**Why it matters:** A missing adapter process, credential prompt, or network hang could consume the session with no recovery.
+**Fix:** `process.ts:3-16` passes `Bun.spawn`'s `timeout` option (10 minutes by default, overridable) and returns `timedOut` in the result.
+**Reproduction (post-fix):** spawning `bun -e 'await Bun.sleep(5000)'` with `timeoutMs: 300` returns in ~307ms with `timedOut: true`.
+**Residual:** the 10-minute bound is process-wide for these adapters; a future long-running scanner should pass an explicit value rather than removing the bound.
+**Re-verify:** `VERIFICATION.md` §V-S12.
+**Related:** `ENG-03`, `RISK-TIME-01`, `V-S12`.
 
 ### RISK-PROOF-02 — Replay signatures are produced but not verified
 
@@ -166,7 +261,163 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Re-verify:** in a disposable workspace, run `operation new "Collision"` three times and confirm three distinct slugs and directories.
 **Related:** `ENG-02`, `V-S2`.
 
+### RISK-PERM-07 — Security-state writes had no permission gate, and `deny` rules were not enforced
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/opsec.ts`, `scope.ts`, `finding.ts` and `observation.ts` contained no `ctx.ask` and were absent from the defaults at `packages/axiomsec/src/agent/agent.ts`, so they resolved to the catch-all `"*": "allow"`. `packages/axiomsec/src/tools/question.ts` and `plan.ts` never consulted the engine, so the declared `question`/`plan_exit` `deny` rules were unreachable. A stored “always” approval was appended *after* the live ruleset in `packages/axiomsec/src/permissions/evaluate.ts`, so it outranked an explicit user `deny`.
+**Why it matters:** the model could downgrade `strict` opsec (re-enabling third-party intel leakage), rewrite the enforcement policy, mint reportable findings, and delete observations without a human decision — and a `deny` rule was decorative.
+**Fix:** `ctx.ask` on the `opsec`, `scope`, `finding` and `observation` write paths; `finding` and `observation` default to `ask`; `question`/`plan_exit` consult the engine; `Permission.disabled` now filters denied tools out of the registry; `Permission.decide` resolves the live ruleset first, lets a stored approval satisfy an `ask`, and never lets it override a `deny`.
+**Reproduction (pre-fix):** `axiomsec debug agent security --tool opsec --params '{"action":"set","level":"normal"}'` succeeded with no prompt. Post-fix it exits 1 with `permission 'scope' resolves to ask`; `--dangerously-skip-permissions` runs it and prints the bypass.
+**Re-verify:** `VERIFICATION.md` `V-S13`; `packages/axiomsec/test/permissions/permission.test.ts`.
+**Related:** `SEC-03`, `RISK-PERM-01`, `RISK-PERM-04`, `RISK-SCOPE-02`, `V-S3`, `V-S13`.
+
+### RISK-AUDIT-01 — Plugin tools bypassed the audit wrapper
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/registry.ts` `fromPlugin` returned a raw `{id, parameters, description, execute}` object and pushed it into `custom`, which was never passed through `Tool.init` (all 45 built-ins were). Consequences: no `tool.called`/`tool.completed`/`tool.error` ledger events, no Zod validation of the model-supplied arguments, no workflow progress, no context refresh, and no side-effect contract.
+**Why it matters:** a user-installed plugin could perform side effects with zero audit trail, violating `ENG-04`.
+**Fix:** `Tool.wrapDef` (`packages/axiomsec/src/tools/tool.ts`) applies the standard wrapper to externally supplied definitions, and the registry routes plugin and config-file tools through it. The plugin API gained an optional `side_effects` field so the published contract is honest.
+**Re-verify:** install a plugin tool, call it, and confirm a `tool.called`/`tool.completed` pair appears in the operation ledger.
+**Related:** `ENG-04`, `ENG-07`, `RISK-AUDIT-02`, `V-S3`.
+
+### RISK-AUDIT-02 — MCP tools were auto-approved and never audited
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/session/prompt.ts` asked with a dynamic `<server>:<tool>` permission key; the catch-all `"*": "allow"` rule matched it, so the ask never became a human decision. The MCP tools were added to the tool map directly, so they never passed through the registry wrapper and produced no ledger events at all.
+**Why it matters:** a third-party MCP server could run any tool with no prompt and no audit record.
+**Fix:** MCP tools use the `mcp:<server>:<tool>` permission namespace, `mcp` defaults to `ask` (`packages/axiomsec/src/agent/agent.ts`), and the call is ledgered as `tool.called`/`tool.completed` in `packages/axiomsec/src/session/prompt.ts`.
+**Re-verify:** connect an MCP server, call one of its tools, and confirm the ask fires and the ledger records the call.
+**Related:** `SEC-03`, `ENG-04`, `RISK-AUDIT-01`, `V-S3`.
+
+### RISK-PERSIST-04 — Scope and opsec lived in a projection, not the canonical database
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/operation/operation.ts` `readProjectedOperationFact` read `cyber/facts.jsonl` *first* and only fell back to SQLite, and `setOpsec` wrote **only** that file — the `cyber_fact` rows kept `opsec: "normal"` forever. `Operation.readBoundary` (and therefore the Guard) consumed the projected value.
+**Why it matters:** the enforcement input was a derived file. Losing or truncating the projection silently reverted the boundary to `normal`, re-enabling third-party intel leakage — the exact outcome `ENG-02` forbids.
+**Fix:** `setOpsec` writes the `operation_state` and `scope_policy` facts to SQLite first and mirrors them into the projection (`writeOperationFacts`); the read path prefers the database and falls back to the projection only for operations created by an older build.
+**Reproduction (post-fix):** after `opsec set strict`, delete `.axiomsec/operation/<slug>/cyber/facts.jsonl`; `opsec status` still reports `Opsec: strict` and the `cyber_fact` table holds the row. Pre-fix the same deletion reverted the level to `normal`.
+**Re-verify:** `VERIFICATION.md` `V-S13`.
+**Related:** `ENG-02`, `ENG-07`, `RISK-PERSIST-02`, `V-S2`, `V-S13`.
+
+### RISK-PERSIST-05 — One malformed manifest line bricked the evidence locker
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/evidence/store.ts` `readManifest` did `.map((l) => Entry.parse(JSON.parse(l)))` with no per-line tolerance, and `put` called it inside the lock. `Evidence.put` also wrote the artifact with a plain `writeFile`, so a crash could leave a truncated file under a digest that claimed it was complete.
+**Why it matters:** a single torn or hand-edited line made `list`, `get`, `verify` and `put` all throw — the operation could never record evidence again, and every finding promotion, report build and share build for it failed.
+**Fix:** the manifest reader skips malformed lines, counts them and logs them; artifacts are written to a temp file and renamed.
+**Reproduction (pre-fix):** appending `TORN LINE NOT JSON` to `manifest.jsonl` made both `list()` and `put()` throw `SyntaxError`. Post-fix the good entries stay readable, new evidence is still accepted, and the damage is logged.
+**Re-verify:** `packages/axiomsec/test/core/evidence/store.test.ts`.
+**Related:** `SEC-04`, `ENG-07`, `RISK-PERSIST-01`, `V-S4`.
+
 ## Medium
+
+### RISK-PROOF-04 — The deliverable contradicted itself on reportable findings
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/cyber/cyber.ts` `projectStateFromParts` built `ProjectedFinding` without `replay_exemption` (only `replay_present` and `replay_reason`), while `packages/axiomsec/src/core/cyber/finding.ts` `summarizeFindingFact` carried it. `isReportableFinding` needs the *structured* exemption, so the two paths disagreed: `packages/axiomsec/src/core/deliverable/build.ts:143` bucketed the projected findings (0 reportable) while `:499` counted the summarized ones (1 reportable) into the same manifest.
+**Why it matters:** a legitimately exempt finding was printed under “Suspected Findings” in `report.md` while `manifest.json` said it was reportable, and `snapshot.counts.reportable_findings` under-counted it. The deliverable disagreed with itself.
+**Fix:** `ProjectedFinding` now carries `replay_exemption` and the projection populates it from the fact value.
+**Re-verify:** promote a finding with a structured exemption, build a report, and confirm the body bucket and the manifest count agree.
+**Related:** `SEC-05`, `RISK-PROOF-01`, `RISK-PROOF-03`, `V-S4`.
+
+### RISK-PROOF-05 — Candidates were counted and rendered as suspected findings
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/cyber/finding.ts` `isSuspectedFinding` was `!isReportableFinding && !isRejectedFinding`, which is true for a candidate. `bucketFindings` therefore put every candidate in the suspected bucket, and the `finding` tool and `report.md` rendered them under “Suspected Findings” with no candidates bucket of their own.
+**Why it matters:** candidates were double counted (`candidates=N … suspected=M` with `M` including `N`) and appeared twice in the report.
+**Fix:** `isSuspectedFinding` requires `kind === "finding"`; the `finding` tool and the deliverable render an explicit “Candidate Findings” bucket. Rejected and stale *candidates* stay visible in the rejected bucket.
+**Re-verify:** `packages/axiomsec/test/core/cyber/finding.test.ts`.
+**Related:** `SEC-05`, `RISK-PROOF-04`, `V-S4`.
+
+### RISK-PERM-08 — Permission matching was platform-dependent
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/support/wildcard.ts` used the `i` regex flag on Windows only (`process.platform === "win32" ? "si" : "s"`), so the same operator rule resolved differently on Windows than on the platforms CI runs.
+**Why it matters:** an operator rule behaved differently per platform, and the difference was invisible.
+**Fix:** matching is case-sensitive on every platform. Permission keys are identifiers, and the case-sensitive behaviour is the one the CI platforms already had.
+**Re-verify:** `packages/axiomsec/test/permissions/permission.test.ts`.
+**Related:** `SEC-03`, `ENG-06`, `RISK-PERM-07`.
+
+### RISK-SECRET-04 — Redaction missed nested secret objects and unquoted auth/cookie assignments
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/replay/redact.ts` re-keyed object children with the *child* key, so the parent hint was dropped: `{"token": {"value": "SECRET"}}` was not redacted. `SECRET_ASSIGN_RE` also omitted `authorization`, `proxy-authorization` and `cookie`, so `Authorization=Bearer <token>` and `Cookie=session=<id>` survived in text artifacts.
+**Why it matters:** the leak reached share bundles, ledger entries and replay files. The key pattern existed, so this was not covered by the accepted “bare opaque value” residual (`RISK-SECRET-03`).
+**Fix:** a sensitive key whose value is an object or array is redacted as a whole; a dedicated rule redacts `authorization`/`cookie` assignment forms to the end of the line.
+**Reproduction (pre-fix):** `redactValue({token:{value:"SUPERSECRET"}}, "on")` returned the secret unchanged, and `redactString("Authorization=Bearer abc123", "on")` was unchanged. Post-fix both are redacted.
+**Re-verify:** `packages/axiomsec/test/core/replay/redact.test.ts`; `VERIFICATION.md` `V-S6`.
+**Related:** `SEC-06`, `RISK-SECRET-01`, `RISK-SECRET-03`, `V-S6`.
+
+### RISK-SECRET-05 — Tool args were persisted unredacted in the session database
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** the ledger copy of the tool args was redacted (`packages/axiomsec/src/tools/tool.ts`), but the session tool part stored the raw args (`packages/axiomsec/src/session/prompt.ts` `input: args`), and that part is persisted to SQLite and included in session exports.
+**Why it matters:** `vault set` and `identity add` take the secret as a tool argument, so every real credential landed verbatim in the session database — which is not the 0600 file the vault is.
+**Fix:** the session tool part uses the same `Tool.redactToolInput` as the ledger.
+**Re-verify:** `vault set` a canary in a disposable operation and grep the session database and the export for the canary.
+**Related:** `SEC-06`, `RISK-SECRET-02`, `RISK-SECRET-03`.
+
+### RISK-PERSIST-06 — The one-time database migration ran on every command
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/index.ts` used a hardcoded marker path `Global.Path.data/axiomsec.db`, but `packages/axiomsec/src/storage/db.ts` resolves the real path from the channel suffix and `AXIOMSEC_DB`. The marker was never created, so with `AXIOMSEC_DB` set every invocation re-ran the JSON→SQLite migration and printed the “one time database migration” banner.
+**Why it matters:** a misleading banner on every command and needless work at every start.
+**Fix:** the marker is the resolved database path, so the migration runs exactly once.
+**Reproduction (post-fix):** with `AXIOMSEC_DB` set, the banner appears on the first command and on no later one.
+**Re-verify:** run two commands in a row with `AXIOMSEC_DB` set and count the banners.
+**Related:** `ENG-05`, `V-S1`, `V-S8`.
+
+### RISK-PERSIST-07 — `share` left a full staging copy of the operation behind
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/tools/share.ts` staged evidence, cyber, workflow and context into `<op>/share-<stamp>/` and never removed it, so every share grew the operation directory without bound.
+**Fix:** the staging tree is removed once the tarball is written.
+**Re-verify:** build a share bundle and confirm the operation directory contains only the tarball.
+**Related:** `ENG-07`, `V-S6`.
+
+### RISK-PERSIST-08 — Fact and relation writes were a non-atomic select-then-insert
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/cyber/cyber.ts` `upsertFact` and `upsertRelation` read the existing row and then inserted, with no `onConflictDoUpdate`. Two writers that both saw “no existing row” raced on the unique index, and the losing UNIQUE error was swallowed by the caller.
+**Why it matters:** a fact or relation could be silently lost, and the ledger would still show the call.
+**Fix:** both are single atomic upserts; the stored row id is resolved afterwards so the projection references the row that exists.
+**Re-verify:** run concurrent writers against one operation and confirm no row is lost.
+**Related:** `ENG-02`, `ENG-07`, `RISK-PERSIST-01`.
+
+### RISK-PERSIST-09 — Operation-level projection appends bypassed the file lock
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/operation/operation.ts` `rename` and `setOpsec` appended to `cyber/*.jsonl` with a bare `appendFile`, while `packages/axiomsec/src/core/cyber/cyber.ts` locks the same files. A concurrent appender could interleave a partial line, and the readers skip unparsable lines silently.
+**Fix:** both take the same `cyber:<dir>:<file>` lock.
+**Re-verify:** run a rename and a tool call concurrently against one operation and check the projection parses.
+**Related:** `ENG-02`, `ENG-07`, `RISK-PERSIST-01`.
+
+### RISK-PERF-01 — Projections grew without bound and were re-parsed on every call
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `readProjectedLedger`, `readProjectedFacts` and `readProjectedRelations` in `packages/axiomsec/src/core/cyber/cyber.ts` parsed the whole projection file into a map, and `refreshDerivedContext` ran after nearly every non-read tool call, so the cost of a call grew with the length of the operation.
+**Why it matters:** quadratic cost over a long session, and `Cyber.readProjectedState` silently fell back to empty state after its 2 s guard, so the deliverable degraded on long operations.
+**Fix:** the projection readers take the tail of the file (1 MB) instead of the whole thing.
+**Residual:** the files still grow on disk; compaction is not implemented.
+**Re-verify:** run a long operation and compare the per-call latency.
+**Related:** `ENG-02`, `ENG-03`.
+
+### RISK-AUDIT-03 — Side-effect metadata is still inconsistent across cyber tools
+
+**Status:** open · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `opsec`, `scope`, `finding` and `observation` now declare `side_effects` correctly (2026-10-22). `report`, `share`, `evidence`, `doctor`, `methodology`, `analyze` and `crypto` do not declare them, so the wrapper publishes `side_effects: []` for tools that write.
+**Why it matters:** a consumer that trusts `facts_written`/`evidence_written` mis-classifies the call, and read-only tools still force a context refresh.
+**Fix direction:** declare `side_effects` on the remaining tools as they are touched.
+**Related:** `ENG-04`, `RISK-AUDIT-01`.
+
+### RISK-AUDIT-04 — Ledger write failures are still swallowed in the tool wrapper
+
+**Status:** accepted (fail-open on audit writes) · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/tool.ts` still ends every ledger/workflow write in `.pipe(Effect.catch(() => Effect.succeed("")))`, and `audit_logged` is computed from the `tool.called` event alone, so a dropped `tool.completed`/`tool.error` is invisible.
+**Why it matters:** a database or lock failure can leave a `tool.called` row with no matching completion while the transcript still claims `audit_logged: true`. `ENG-07` forbids this, so the gap is real but documented.
+**Mitigation:** the tool still executes and reports its own error; the failure is visible in the log, not in the ledger.
+**Fix direction:** record a degraded-audit marker in the operation context when a ledger write fails, instead of dropping the event.
+**Related:** `ENG-07`, `ENG-04`, `RISK-PERSIST-01`.
 
 ### RISK-NET-03 — Server accepts auth tokens in URLs
 
@@ -389,7 +640,8 @@ This register documents risks; it does not fix them unless an entry is marked `f
 
 These are suspicions from code reading, not confirmed facts. Do not cite them as bugs until reproduced.
 
-- **Redirect scope re-checks** — `http_request` exposes `follow_redirects` but the parameter is not read (`packages/axiomsec/src/tools/http-request.ts`); if the HTTP client follows redirects, the final host may not be re-checked against the boundary. Confirm with a loopback redirect fixture.
+- **Browser non-HTTP egress** — `routeWebSocket` now covers `ws(s)`, but WebRTC data channels, DNS prefetch/preconnect, and service workers may still reach out-of-boundary hosts. Confirm with a loopback page using `RTCPeerConnection`; do not assume route coverage is complete.
+- **Triage adapter file scope** — `binary_triage` and `iac_triage` now gate user paths, but `cloud_posture` and `container_surface` may read provider/container configuration outside the workspace without an equivalent `external_directory`/`read` gate. Confirm with a canary config path.
 - **Provider env writes** — provider auth appears to write credentials into `process.env` (`packages/axiomsec/src/providers/provider.ts` near the env-direct reads). Confirm whether secrets can leak to child processes or logs.
 - **Swallowed projection failures** — `packages/axiomsec/src/core/cyber/cyber.ts` and `packages/axiomsec/src/core/operation/operation.ts` use best-effort catches around JSONL/projection writes. Confirm whether a failure can leave DB and projections inconsistent without a warning.
 - **No operation HTTP API** — the route tree has no operation/scope/finding endpoints (`packages/axiomsec/src/server/instance/index.ts:34-105`). Confirm no SDK client assumes them; if a client does, it will 404.

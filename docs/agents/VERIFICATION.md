@@ -7,14 +7,16 @@ This file is the definition of done.
 
 | Command | What it actually does | Can you trust it? |
 |---|---|---|
-| `bun test` (root) | Prints “tests are not shipped in this lite repo” and exits 0 (`package.json:12`) | No |
-| `bun test --timeout 30000` in `packages/axiomsec` | The release workflow runs it only when test files exist (`.github/workflows/release.yml`); tests are gitignored (`.gitignore:35-47`) and `bunfig.toml:4-5` redirects the test root, so this lite repo skips it | No; no behavioral coverage |
+| `bun test` (root) | Runs the tracked suite in `packages/axiomsec/test/` | Only for what it covers: pure predicates and file-level behaviour |
+| `bun test --timeout 30000` in `packages/axiomsec` | Same suite; the release workflow runs it when test files exist | Same scope |
 | `bun typecheck` | Turbo + `tsgo --noEmit` across packages | Strongest automated signal |
-| `bun run lint` | oxlint; duplicate `options` keys in `.oxlintrc.json`; no format check | Partial |
+| `bun run lint` | oxlint; no format check | Partial |
 | `bun run --cwd packages/axiomsec build --single --skip-install` | Bun compile + embedded migrations + `--version` smoke | Build proof, not behavior proof |
 | `bun install` | Exact lockfile resolution | Setup only |
 
-There is no coverage, no test fixtures, and no CI test job. **Never write “tests pass.”**
+The tracked suite covers the security predicates: boundary matching, finding reportability, redaction, permission precedence, the evidence locker, and operation-slug containment (`packages/axiomsec/test/`). It is **not** end-to-end coverage: the session loop, TUI, browser, scanner and server paths are still verified by the manual `V-S*` scenarios below. **Name the suite or the scenario you ran — do not write “tests pass” as if the whole system were covered.**
+
+The test root is set in `bunfig.toml`; `packages/axiomsec/test/` is explicitly un-ignored in `.gitignore` while scratch fixture trees stay excluded.
 
 ## 2. Required gate
 
@@ -24,6 +26,7 @@ Run from the repo root:
 bun install
 bun typecheck
 bun run lint
+bun test
 bun run --cwd packages/axiomsec build --single --skip-install
 ```
 
@@ -77,7 +80,7 @@ rg -n "Guard\.(check|checkUrl|checkHost|checkPath)" packages/axiomsec/src/tools
 rg -n "ctx\.ask" packages/axiomsec/src/tools/{http-request,scanner,webfetch,browser,net,bash}.ts
 ```
 
-Expected: Guard calls exist in `http-request`, `webfetch`, `scanner`, `appsec-probe`, `browser`, and `net`; `bash` has none (`RISK-SCOPE-03`).
+Expected: Guard calls exist in `http-request`, `webfetch`, `scanner`, `appsec-probe`, `browser`, and `net`; `bash` has none (`RISK-SCOPE-03`). Redirect hops go through `packages/axiomsec/src/tools/guarded-http.ts`, scanner crawl/JS use the `allowUrl` callback, and browser WebSockets use `context.routeWebSocket`. Run the redirect and WebSocket checks in §V-S12 with loopback fixtures.
 
 With a configured default model:
 
@@ -270,6 +273,112 @@ await rm(base, { recursive: true, force: true })
 
 **Pass:** a `text` event contains `MOCK-PROVIDER-OK`, a `step_finish` reports usage, the command exits 0, and stdout contains no `"type":"error"` event. Repeat in a workspace with more than 100 changed paths to exercise the snapshot batching (`RISK-SNAPSHOT-01`). Verified 2026-10-21.
 
+### V-S12 — Boundary redirects, WebSockets, and tool argument defaults (provider-free primitives; provider required for tools)
+
+Pure matcher check (no provider):
+
+```bash
+bun -e '
+import { evaluate } from "./packages/axiomsec/src/core/boundary/evaluate.ts"
+const b = { default: "ask", in_scope: ["https://example.com"], out_of_scope: [] }
+const m = (value) => evaluate(b, { kind: "url", value }).mode
+console.log("exact", m("https://example.com/"))
+console.log("suffix", m("https://example.com.evil.test/"))
+console.log("userinfo", m("https://example.com@evil.test/"))
+console.log("port", m("https://example.com:8443/"))
+'
+```
+
+**Pass:** `exact allow`; `suffix`, `userinfo`, and `port` are `ask`. This is the `RISK-SCOPE-04` check.
+
+Loopback redirect check (provider required for the tool; disposable workspace only):
+
+1. Start `A` on `127.0.0.1:19081` returning `302 Location: http://127.0.0.2:19183/landed`, and `B` on `127.0.0.2:19183` returning `OUT-OF-SCOPE-HIT` and logging each request.
+2. Create an operation with target `http://127.0.0.1:19081` and set opsec `strict`.
+3. Run `debug agent security --tool http_request --dangerously-skip-permissions --params '{"url":"http://127.0.0.1:19081/start","method":"GET"}'`.
+
+**Pass:** exit 1 with `out of scope: url=http://127.0.0.2:19183/landed`; `B` logs zero requests. Repeat with `webfetch`; same result. The `--dangerously-skip-permissions` bypass covers the tool/scope `ask`, not an explicit strict-mode `deny`. This is the `RISK-SCOPE-05` check.
+
+Scanner redirect/sitemap check: serve a page on `A` that redirects `robots.txt` to `B` or lists `B` in `sitemap.xml`; run `scanner` mode `crawl`. **Pass:** `B` receives no request, while an in-scope crawl still returns the page URL.
+
+WebSocket check (Chromium required): serve a page on `127.0.0.1:19091` that opens `ws://127.0.0.2:19184`, and a WebSocket server on `127.0.0.2:19184` that logs `WS-OPEN`. Navigate with the `browser` tool. **Pass:** the page loads but the WebSocket server logs no `WS-OPEN`. This is the `RISK-SCOPE-06` check.
+
+Tool argument defaults (provider required): `debug agent security --tool finding --params '{"key":"defaults-probe"}'` must return `action: list` and the finding list output, not a promotion attempt. `debug agent security --tool evidence --params '{"action":"add_file","path":".env"}'` and `debug agent hacking --tool interact --params '{"op":"poll","id":"none"}'` must exit 1 with `permission ... resolves to ask`; with `--dangerously-skip-permissions` the bypass line is printed. Direct check for the adapter bound:
+
+```bash
+bun -e '
+import { runProcess } from "./packages/axiomsec/src/tools/process.ts"
+const t = Date.now()
+const r = await runProcess([process.execPath, "-e", "await Bun.sleep(5000)"], { timeoutMs: 300 })
+console.log("elapsed", Date.now() - t, "timedOut", r.timedOut)
+'
+```
+
+**Pass:** elapsed under 3 seconds and `timedOut true`. These are the `RISK-TOOL-02`, `RISK-PERM-05`, `RISK-PERM-06`, and `RISK-TIME-02` checks. Never run the bypass flags against a real workspace or target.
+
+### V-S13 — Proof independence, slug containment, and the security-state permission gate
+
+Disposable workspace only. Create an operation first (`"$BIN" operation new Verify --kind pentest --target http://127.0.0.1:18080`).
+
+**1. A finding must not self-certify (`RISK-PROOF-03`):**
+
+```bash
+"$BIN" debug agent security --tool finding --params '{"action":"promote","key":"self-certified","replay":"trust me"}'
+"$BIN" debug agent security --tool finding --params '{"action":"status","key":"self-certified"}'
+```
+
+**Pass:** the promote returns `Promotion requires at least one evidence reference …` with `promoted: false`; the status returns `No candidate or finding with that key.` (`found: false`). No fact and no evidence artifact is created.
+
+**2. Real evidence plus replay still promotes (`RISK-PROOF-03` control):**
+
+```bash
+"$BIN" debug agent security --tool evidence --params '{"action":"add_text","text":"canary-evidence","label":"canary"}'
+# use the returned sha
+"$BIN" debug agent security --tool finding --params '{"action":"promote","key":"real-finding","evidence":["<sha>"],"replay":"steps to reproduce"}'
+```
+
+**Pass:** the promote is refused without `--dangerously-skip-permissions` (the `finding` permission resolves to `ask`) and succeeds with it, returning `status: verified` with **two different refs**: `evidence: <sha>` and `replay: <other sha>`. The two must not be the same artifact.
+
+**3. A slug must not escape the operation tree (`RISK-SCOPE-07`):**
+
+```bash
+"$BIN" debug agent security --tool workspace --params '{"action":"rename","slug":"../..","label":"TRAVERSAL-CANARY"}'
+ls ../cyber 2>/dev/null && echo "ESCAPED" || echo "contained"
+```
+
+**Pass:** the tool returns `Invalid operation slug: "../.."` and no `cyber/` directory appears outside `.axiomsec/operation/`. Repeat with `slug: "../../../../evil"`.
+
+**4. Security-state writes must ask (`RISK-PERM-07`):**
+
+```bash
+"$BIN" debug agent security --tool opsec --params '{"action":"set","level":"strict"}'
+"$BIN" debug agent security --tool scope --params '{"action":"set","level":"normal"}'
+"$BIN" debug agent security --tool observation --params '{"action":"add","subtype":"vuln","title":"x"}'
+```
+
+**Pass:** each exits 1 with `permission '…' resolves to ask`. With `--dangerously-skip-permissions` each runs and prints its bypass line. A `status` action never asks.
+
+**5. Scope and opsec are canonical in SQLite (`RISK-PERSIST-04`):**
+
+```bash
+"$BIN" debug agent security --tool opsec --params '{"action":"set","level":"strict"}' --dangerously-skip-permissions
+rm .axiomsec/operation/verify/cyber/facts.jsonl
+"$BIN" debug agent security --tool opsec --params '{"action":"status"}'
+```
+
+**Pass:** the status still reports `Opsec: strict` after the projection is deleted, and the `cyber_fact` table holds an `operation_state` row with `opsec: strict`.
+
+**6. The one-time migration runs once (`RISK-PERSIST-06`):**
+
+```bash
+AXIOMSEC_DB="$TMP/axiomsec.db" "$BIN" operation list
+AXIOMSEC_DB="$TMP/axiomsec.db" "$BIN" operation list
+```
+
+**Pass:** the “one time database migration” banner appears on the first command only.
+
+**Evidence:** the command output for each case. The predicate-level equivalents are automated in `packages/axiomsec/test/` — `bun test` must also pass. Verified 2026-10-22.
+
 ## 4. Clean-room recipe
 
 Use the XDG + `AXIOMSEC_DB` recipe in [DEBUGGING.md](DEBUGGING.md). `AXIOMSEC_TEST_HOME` alone is not enough. Run `debug paths` and confirm every path is under the temp directory before creating operations.
@@ -292,6 +401,7 @@ A change is done only when:
 
 - [ ] `bun typecheck` passes.
 - [ ] `bun run lint` passes; warnings were read, not ignored.
+- [ ] `bun test` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/`.
 - [ ] `bun run --cwd packages/axiomsec build --single --skip-install` passes, or the PR states exactly why it could not run.
 - [ ] The relevant `V-S*` scenario was run, with command output or artifact paths in the PR.
 - [ ] The change was checked against [INVARIANTS.md](INVARIANTS.md); any new or changed risk is in [KNOWN-RISKS.md](KNOWN-RISKS.md) with a date and `file:line`.
@@ -300,12 +410,12 @@ A change is done only when:
 
 ## 7. What not to do
 
-- Do not claim tests pass. `bun test` is a no-op.
+- Do not claim the whole system is tested. `bun test` covers the predicates in `packages/axiomsec/test/`; the rest is the manual scenarios above.
 - Do not run the release workflow to “see if it works.”
 - Do not use real credentials, customer data, or third-party targets.
 - Do not use `--dangerously-skip-permissions`, `debug agent` bypasses, or `run --dangerously-skip-permissions` on a real target.
 - Do not hand-edit generated files.
-- Do not add test files in an ordinary PR; propose a test harness as a separate repo-structure change (it requires `.gitignore`, `bunfig.toml`, and CI changes).
+- Do not add a test outside `packages/axiomsec/test/`; the other test paths are still gitignored scratch space.
 - Do not reformat unrelated files.
 - Do not hide a known risk by deleting it from the register; mark it fixed/stale with evidence.
 

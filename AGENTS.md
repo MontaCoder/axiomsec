@@ -18,11 +18,11 @@ Request path in one breath: TUI or `serve` → session loop → model → tool r
 
 1. **Authorized targets only.** Use owned systems, labs, or loopback fixtures for verification; never send test traffic to third-party hosts.
 2. **Operation before target work.** Create/attach an operation first. `Guard.check` returns `allow` when no operation is active (`packages/axiomsec/src/core/boundary/guard.ts:87-118`).
-3. **Guard every target-touching tool.** Call `Guard.check*` before DNS, sockets, browser launch, or subprocess. `browser` and `net` are covered; the remaining gap is `bash` (`RISK-SCOPE-03`).
-4. **Ask before side effects.** Sensitive tools need `ctx.ask`. Network, shell, and secret tools default to `ask`, and a boundary `ask` maps to the separate `scope` permission; other built-ins remain `"*": "allow"` (`packages/axiomsec/src/agent/agent.ts:110-127`), so an ask only prompts when the resolved ruleset says `ask`.
-5. **Findings need proof.** Reportable means `kind=finding`, `status=verified`, evidence refs that resolve and re-hash through `Evidence.verify`, and replay present OR a structured domain-valid exemption (`packages/axiomsec/src/core/cyber/finding.ts:189-194`). Never weaken the oracle.
-6. **Evidence is immutable; secrets are narrow.** Evidence is SHA-256 addressed; do not mutate bytes or hand-edit `manifest.jsonl`. Tool args are ledgered; share redaction covers text/JSON but not binary or unknown formats — never put real credentials in args, logs, evidence, or shares.
-7. **SQLite cyber kernel is canonical.** JSONL, context packs, reports, and markdown notebooks are projections (`packages/axiomsec/src/core/operation/operation.ts:1-14`).
+3. **Guard every target-touching tool.** Call `Guard.check*` before DNS, sockets, browser launch, or subprocess, including every redirect hop and discovered subresource. `browser`, `net`, redirects, and scanner subresources are covered; the remaining gap is `bash` (`RISK-SCOPE-03`).
+4. **Ask before side effects.** Sensitive tools need `ctx.ask`. Network, shell, secret, and operation-record tools default to `ask`; a boundary `ask` maps to the separate `scope` permission (`packages/axiomsec/src/agent/agent.ts:110-140`). A `deny` rule is enforced: it removes the tool from the registry and beats a stored approval.
+5. **Findings need proof.** Reportable means `kind=finding`, `status=verified`, evidence refs that resolve and re-hash through `Evidence.verify`, and replay present OR a structured domain-valid exemption (`packages/axiomsec/src/core/cyber/finding.ts:189-194`). Replay steps are **not** evidence — promotion needs independent evidence. Never weaken the oracle.
+6. **Evidence is immutable; secrets are narrow.** Evidence is SHA-256 addressed; do not mutate bytes or hand-edit `manifest.jsonl`. Tool args are ledgered and redacted; share redaction covers text/JSON but not binary or unknown formats — never put real credentials in args, logs, evidence, or shares.
+7. **SQLite cyber kernel is canonical.** JSONL, context packs, reports, and markdown notebooks are projections (`packages/axiomsec/src/core/operation/operation.ts:1-14`). Read the database first; rebuild a projection, never fix the kernel from it.
 8. **Per-project state lives in `Instance`/`InstanceState`.** No module-global `Map`/`Set` for project or session data.
 9. **Network and subprocess calls need a timeout or abort.** Do not add a bare `fetch`/`spawn`/`exec`.
 10. **Never hand-edit generated files:** `packages/sdk/src/v2/gen/*`, `packages/axiomsec/src/providers/models-snapshot.*`, applied migrations.
@@ -33,20 +33,22 @@ Request path in one breath: TUI or `serve` → session loop → model → tool r
 bun install
 bun typecheck
 bun run lint
+bun test
 bun run --cwd packages/axiomsec build --single --skip-install
 bun run --cwd packages/axiomsec dev
 ```
 
 Use Bun 1.3.11 (the `packageManager` pin); CI installs that version, and a newer local Bun can change bundling behavior. Run `bun install --frozen-lockfile` for CI parity. The build also smoke-tests the produced binary with `--version`.
 
-## Tests: the uncomfortable truth
+## Tests: what is and is not covered
 
-`bun test` at the repo root prints “tests are not shipped in this lite repo” and exits 0 (`package.json:12`). Test directories/files are gitignored, and `bunfig.toml:4-5` points Bun’s test root at a nonexistent directory. The release workflow runs `bun test --timeout 30000` only when test files exist; this lite repo has none, so the step is skipped. **Do not write “tests pass.”**
+`bun test` runs the tracked suite in `packages/axiomsec/test/` (pure predicates and file-level behaviour: boundary matching, reportability, redaction, permission precedence, evidence locker, slug containment). It is **not** end-to-end coverage: the session loop, TUI, browser and server paths are still verified by the manual `V-S*` scenarios in [VERIFICATION.md](docs/agents/VERIFICATION.md). Never write “the whole system is tested”; say which suite or scenario you ran.
 
 ## Definition of done
 
 - [ ] `bun typecheck` passes.
 - [ ] `bun run lint` passes; warnings were read, not ignored.
+- [ ] `bun test` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/`.
 - [ ] `bun run --cwd packages/axiomsec build --single --skip-install` passes, or the PR states exactly why it could not run.
 - [ ] The relevant `V-S*` scenario in [VERIFICATION.md](docs/agents/VERIFICATION.md) was run, with command output or artifact paths in the PR.
 - [ ] The change was checked against [INVARIANTS.md](docs/agents/INVARIANTS.md); any new/changed risk is in [KNOWN-RISKS.md](docs/agents/KNOWN-RISKS.md) with a date and `file:line`.
@@ -62,9 +64,9 @@ Use Bun 1.3.11 (the `packageManager` pin); CI installs that version, and a newer
 
 ## Working rules
 
-- Read `packages/axiomsec/src/tools/tool.ts:205-450` before changing tool behavior; the wrapper owns ledger, workflow, context refresh, and truncation.
+- Read `packages/axiomsec/src/tools/tool.ts:205-450` before changing tool behavior; the wrapper owns ledger, workflow, context refresh, and truncation. Plugin and config tools go through it too (`Tool.wrapDef`).
 - Make the smallest change that restores the invariant. No drive-by refactors or unrelated reformatting; Prettier is configured but unenforced.
-- Do not add test files in an ordinary PR. Tests are not tracked here; propose a test harness as a separate repo-structure change (`.gitignore`, `bunfig.toml`, CI).
+- Add a test in `packages/axiomsec/test/` for every security predicate you change. The suite is tracked; only the directories listed in `.gitignore` are excluded.
 - Update the deep doc and risk register in the same PR as the behavior change.
 - If this file and code disagree, code wins: fix this file or file a risk. Keep this file ≤150 lines (`wc -l AGENTS.md`); move detail into the deep docs.
 

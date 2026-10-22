@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-22
+
+### Security
+
+- A finding can no longer certify itself. The replay artifact is tracked
+  separately and never counts as evidence, so promotion needs at least one
+  independently supplied ref that resolves and re-hashes
+  (`RISK-PROOF-03`).
+- A model-supplied operation slug can no longer redirect a write outside
+  `.axiomsec/operation/`. Slugs are validated and every path primitive asserts
+  containment (`RISK-SCOPE-07`).
+- `opsec`, `scope`, `finding` and `observation` writes now ask before they
+  change the operation record, `question`/`plan_exit` consult the permission
+  engine, a `deny` rule removes the tool from the model's surface, and a
+  stored "always" approval no longer outranks an explicit `deny`
+  (`RISK-PERM-07`).
+- Plugin and config-file tools now run through the same audit wrapper as the
+  built-ins, and MCP tools ask by default and are ledgered
+  (`RISK-AUDIT-01`, `RISK-AUDIT-02`).
+- Scope and opsec are written to the canonical SQLite kernel first and read
+  from it first, so losing the projection no longer silently reverts the
+  boundary to `normal` (`RISK-PERSIST-04`).
+- Redaction now covers a sensitive key whose value is an object or array, and
+  the unquoted `Authorization=` / `Cookie=` assignment forms
+  (`RISK-SECRET-04`). Tool arguments are redacted before they are persisted
+  in the session database (`RISK-SECRET-05`).
+
+### Fixed
+
+- A single malformed line no longer bricks the evidence locker, and evidence
+  artifacts are written atomically so a crash cannot truncate one under a
+  digest that claims it is complete (`RISK-PERSIST-05`).
+- The deliverable no longer contradicts itself: a finding promoted with a
+  structured replay exemption is reportable in both the report body and the
+  manifest (`RISK-PROOF-04`), and candidates are no longer counted and
+  rendered as suspected findings (`RISK-PROOF-05`).
+- Fact and relation writes are single atomic upserts, so concurrent writers
+  can no longer lose a row (`RISK-PERSIST-08`). Operation-level projection
+  appends take the same file lock as the kernel (`RISK-PERSIST-09`).
+- The one-time database migration now runs once. With `AXIOMSEC_DB` set it
+  previously re-ran and re-announced itself on every command
+  (`RISK-PERSIST-06`).
+- `share` no longer leaves a full staging copy of the operation behind
+  (`RISK-PERSIST-07`).
+- Permission pattern matching no longer depends on the platform
+  (`RISK-PERM-08`).
+- The projection readers take the tail of the file instead of re-parsing an
+  unbounded log on every tool call (`RISK-PERF-01`).
+- Boundary URL patterns are now parsed before matching, so a scheme-qualified
+  scope such as `https://example.com` no longer allows
+  `https://example.com.evil.test` via a raw prefix match (`RISK-SCOPE-04`).
+- `http_request`, `webfetch`, scanner crawl/JS, and browser WebSockets now
+  re-check the boundary on redirects and discovered subresources, with the
+  operator asked before a cross-boundary hop
+  (`RISK-SCOPE-05`, `RISK-SCOPE-06`).
+- The tool wrapper now passes the Zod-parsed arguments to tool execution, so
+  schema defaults and coercions apply; `finding` without `action` returns the
+  documented list instead of falling through to promotion (`RISK-TOOL-02`).
+- `evidence add_file`, `binary_triage`, and `iac_triage` now apply the
+  external-directory and `read` permission gates to user-supplied paths
+  (`RISK-PERM-05`), and `interact` asks before spawning or managing sessions
+  (`RISK-PERM-06`).
+- Triage adapters run with a bounded subprocess timeout (`RISK-TIME-02`).
+
+### Added
+
+- A tracked test suite in `packages/axiomsec/test/`, wired into `bun test`,
+  `bunfig.toml`, `.gitignore` and CI. It covers the security predicates:
+  boundary matching, finding reportability, redaction, permission precedence,
+  the evidence locker, and operation-slug containment. End-to-end paths are
+  still covered by the manual `V-S*` scenarios in `docs/agents/VERIFICATION.md`.
+- `V-S13` in `docs/agents/VERIFICATION.md`: proof independence, slug
+  containment, the security-state permission gate, canonical scope state, and
+  the one-time migration check.
+
 ## [0.3.1] — 2026-10-22
 
 ### Fixed
