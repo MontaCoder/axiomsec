@@ -22,6 +22,15 @@ export const QuestionTool = Tool.define<typeof parameters, Metadata, Question.Se
       parameters,
       execute: (params: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
+          // The `question` permission is a real decision point: an operator can
+          // deny it, and a headless run must not block on an answer that can
+          // never arrive. (SEC-03 / RISK-PERM-07)
+          yield* ctx.ask({
+            permission: "question",
+            patterns: ["*"],
+            always: [],
+            metadata: { action: "ask", count: params.questions.length },
+          })
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             questions: params.questions,

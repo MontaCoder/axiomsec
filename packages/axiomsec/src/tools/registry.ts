@@ -82,7 +82,7 @@ type TaskDef = Tool.InferDef<typeof TaskTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
 
 type State = {
-  custom: Tool.Def[]
+  custom: Tool.Def<any, any>[]
   builtin: Tool.Def[]
   task: TaskDef
   read: ReadDef
@@ -177,14 +177,17 @@ export const layer: Layer.Layer<
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
-        const custom: Tool.Def[] = []
+        const custom: Tool.Def<any, any>[] = []
 
-        function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
-          return {
-            id,
-            parameters: z.object(def.args),
-            description: def.description,
-            execute: (args, toolCtx) =>
+        /**
+         * Plugin and config-file tools must go through the same audit wrapper
+         * as the built-ins: argument validation, ledger events, workflow
+         * progress and context refresh. (ENG-04 / RISK-AUDIT-01)
+         */
+        function fromPlugin(id: string, def: ToolDefinition) {
+          return Effect.gen(function* () {
+            const parameters = z.object(def.args)
+            const execute = (args: z.infer<typeof parameters>, toolCtx: Tool.Context) =>
               Effect.gen(function* () {
                 const pluginCtx: PluginToolContext = {
                   ...toolCtx,
@@ -193,18 +196,26 @@ export const layer: Layer.Layer<
                   worktree: ctx.worktree,
                 }
                 const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
-                const info = yield* agent.get(toolCtx.agent)
-                const out = yield* truncate.output(result, {}, info)
                 return {
                   title: "",
-                  output: out.truncated ? out.content : result,
+                  output: typeof result === "string" ? result : String(result ?? ""),
                   metadata: {
-                    truncated: out.truncated,
-                    outputPath: out.truncated ? out.outputPath : undefined,
+                    side_effects: def.side_effects ?? [],
                   },
                 }
-              }),
-          }
+              })
+            const info = yield* Tool.wrapDef(
+              id,
+              {
+                description: def.description,
+                parameters,
+                execute,
+              },
+              truncate,
+              agent,
+            )
+            return yield* Tool.init(info)
+          })
         }
 
         const dirs = yield* config.directories()
@@ -218,14 +229,14 @@ export const layer: Layer.Layer<
             () => import(process.platform === "win32" ? match : pathToFileURL(match).href),
           )
           for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
-            custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+            custom.push(yield* fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
           }
         }
 
         const plugins = yield* plugin.list()
         for (const p of plugins) {
           for (const [id, def] of Object.entries(p.tool ?? {})) {
-            custom.push(fromPlugin(id, def))
+            custom.push(yield* fromPlugin(id, def))
           }
         }
 
@@ -384,7 +395,16 @@ export const layer: Layer.Layer<
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
-      const filtered = (yield* all()).filter((tool) => {
+      const allTools = yield* all()
+      // A `deny` rule must actually remove the tool from the model's surface.
+      // Without this the rule is only declarative and a model can still call a
+      // tool the operator disabled. (SEC-03 / RISK-PERM-07)
+      const denied = Permission.disabled(
+        allTools.map((tool) => tool.id),
+        input.agent.permission,
+      )
+      const filtered = allTools.filter((tool) => {
+        if (denied.has(tool.id)) return false
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           return input.providerID === ProviderID.axiomsec || Flag.AXIOMSEC_ENABLE_EXA
         }

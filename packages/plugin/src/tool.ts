@@ -30,6 +30,11 @@ type AskInput = {
 export function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
+  /**
+   * Side effects the tool performs. Declared so the host can publish an
+   * accurate side-effect contract for the call; omitted means "unknown".
+   */
+  side_effects?: readonly string[]
   execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<string>
 }) {
   return input

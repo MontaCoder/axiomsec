@@ -210,6 +210,29 @@ export function evaluate(permission: string, pattern: string, ...rulesets: Rules
   return evalRule(permission, pattern, ...rulesets)
 }
 
+/**
+ * Resolve the effective action for one permission/pattern pair.
+ *
+ * Precedence:
+ *  1. the live ruleset decides — an explicit `deny` always wins;
+ *  2. a stored "always" approval satisfies an `ask`;
+ *  3. otherwise the caller must ask.
+ *
+ * A stored approval therefore never outranks an operator `deny`.
+ * (SEC-03 / RISK-PERM-07)
+ */
+export function decide(
+  ruleset: Ruleset,
+  approved: Ruleset,
+  permission: string,
+  pattern: string,
+): "allow" | "deny" | "ask" {
+  const rule = evaluate(permission, pattern, ruleset)
+  if (rule.action !== "ask") return rule.action
+  const stored = evaluate(permission, pattern, approved)
+  return stored.action === "allow" ? "allow" : "ask"
+}
+
 export class Service extends Context.Service<Service, Interface>()("@axiomsec/Permission") {}
 
 export const layer = Layer.effect(
@@ -245,14 +268,14 @@ export const layer = Layer.effect(
       let needsAsk = false
 
       for (const pattern of request.patterns) {
-        const rule = evaluate(request.permission, pattern, ruleset, approved)
-        log.info("evaluated", { permission: request.permission, pattern, action: rule })
-        if (rule.action === "deny") {
+        const action = decide(ruleset, approved, request.permission, pattern)
+        log.info("evaluated", { permission: request.permission, pattern, action })
+        if (action === "deny") {
           return yield* new DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
-        if (rule.action === "allow") continue
+        if (action === "allow") continue
         needsAsk = true
       }
 

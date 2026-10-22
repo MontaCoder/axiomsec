@@ -51,7 +51,7 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: "observation · no active operation",
               output: "No active operation.",
-              metadata: { action: params.action, active: false },
+              metadata: { action: params.action, active: false, side_effects: Tool.sideEffects("read_only") },
             }
           }
 
@@ -60,11 +60,19 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: "observation add",
                 output: "Provide subtype and title.",
-                metadata: { action: "add", slug },
+                metadata: { action: "add", slug, side_effects: Tool.sideEffects("read_only") },
               }
             }
             const subtype = params.subtype
             const title = params.title
+            // Observations are evidence-backed claims in the operation record.
+            // Writing one needs a human decision. (SEC-03 / RISK-PERM-07)
+            yield* ctx.ask({
+              permission: "observation",
+              patterns: ["add"],
+              always: [],
+              metadata: { action: "add", slug, subtype, title },
+            })
             const item = yield* Effect.promise(() =>
               Observation.add(workspace, slug, {
                 subtype,
@@ -78,7 +86,13 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation · ${item.id}`,
               output: formatObservation(item),
-              metadata: { action: "add", slug, id: item.id, status: item.status },
+              metadata: {
+                action: "add",
+                slug,
+                id: item.id,
+                status: item.status,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
@@ -103,7 +117,13 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation · ${items.length}`,
               output,
-              metadata: { action: "list", slug, count: items.length, counts },
+              metadata: {
+                action: "list",
+                slug,
+                count: items.length,
+                counts,
+                side_effects: Tool.sideEffects("read_only"),
+              },
             }
           }
 
@@ -111,7 +131,7 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation ${params.action}`,
               output: "Provide id for this action.",
-              metadata: { action: params.action, slug },
+              metadata: { action: params.action, slug, side_effects: Tool.sideEffects("read_only") },
             }
           }
 
@@ -120,7 +140,13 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation · ${params.id}`,
               output: "Observation not found.",
-              metadata: { action: params.action, slug, id: params.id, found: false },
+              metadata: {
+                action: params.action,
+                slug,
+                id: params.id,
+                found: false,
+                side_effects: Tool.sideEffects("read_only"),
+              },
             }
           }
 
@@ -128,7 +154,14 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation · ${item.id}`,
               output: formatObservation(item),
-              metadata: { action: "status", slug, id: item.id, found: true, status: item.status },
+              metadata: {
+                action: "status",
+                slug,
+                id: item.id,
+                found: true,
+                status: item.status,
+                side_effects: Tool.sideEffects("read_only"),
+              },
             }
           }
 
@@ -137,9 +170,21 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: `observation link_evidence · ${item.id}`,
                 output: "Provide evidence ref.",
-                metadata: { action: "link_evidence", slug, id: item.id, found: true },
+                metadata: {
+                  action: "link_evidence",
+                  slug,
+                  id: item.id,
+                  found: true,
+                  side_effects: Tool.sideEffects("read_only"),
+                },
               }
             }
+            yield* ctx.ask({
+              permission: "observation",
+              patterns: ["link_evidence"],
+              always: [],
+              metadata: { action: "link_evidence", slug, id: item.id, evidence: params.evidence },
+            })
             yield* Effect.promise(() => Observation.linkEvidence(workspace, slug, item.id, params.evidence!))
             const updated =
               (yield* Effect.promise(() => Observation.getProjected(workspace, slug, item.id)).pipe(
@@ -150,19 +195,45 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `observation · ${updated.id}`,
               output: formatObservation(updated),
-              metadata: { action: "link_evidence", slug, id: updated.id, evidence: params.evidence },
+              metadata: {
+                action: "link_evidence",
+                slug,
+                id: updated.id,
+                evidence: params.evidence,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
           if (params.action === "remove") {
+            // Removing an observation rewrites the operation record and can
+            // invalidate a finding that referenced it. (SEC-03 / RISK-PERM-07)
+            yield* ctx.ask({
+              permission: "observation",
+              patterns: ["remove"],
+              always: [],
+              metadata: { action: "remove", slug, id: item.id },
+            })
             yield* Effect.promise(() => Observation.remove(workspace, slug, item.id))
             return {
               title: `observation removed · ${item.id}`,
               output: `Removed observation ${item.id}.`,
-              metadata: { action: "remove", slug, id: item.id, removed: true },
+              metadata: {
+                action: "remove",
+                slug,
+                id: item.id,
+                removed: true,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
+          yield* ctx.ask({
+            permission: "observation",
+            patterns: ["update"],
+            always: [],
+            metadata: { action: "update", slug, id: item.id, status: params.status },
+          })
           yield* Effect.promise(() =>
             Observation.update(workspace, slug, item.id, {
               title: params.title,
@@ -182,7 +253,13 @@ export const ObservationTool = Tool.define<typeof parameters, Metadata, never>(
           return {
             title: `observation · ${updated.id}`,
             output: formatObservation(updated),
-            metadata: { action: "update", slug, id: updated.id, status: updated.status },
+            metadata: {
+              action: "update",
+              slug,
+              id: updated.id,
+              status: updated.status,
+              side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+            },
           }
         }),
     }

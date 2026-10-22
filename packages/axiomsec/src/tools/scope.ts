@@ -114,16 +114,24 @@ export const ScopeTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: "scope set",
                 output: "Provide level when action = set.",
-                metadata: { action: "set" },
+                metadata: { action: "set", side_effects: Tool.sideEffects("read_only") },
               }
             }
             if (!active) {
               return {
                 title: "scope set",
                 output: "No active operation.",
-                metadata: { action: "set", active: false },
+                metadata: { action: "set", active: false, side_effects: Tool.sideEffects("read_only") },
               }
             }
+            // The scope mode is the enforcement policy. Changing it needs an
+            // explicit human decision. (SEC-03 / RISK-PERM-07)
+            yield* ctx.ask({
+              permission: "scope",
+              patterns: [`scope:${params.level}`],
+              always: [],
+              metadata: { action: "set", level: params.level, slug: active.slug },
+            })
             yield* Effect.promise(() => Operation.setOpsec(workspace, active.slug, params.level!))
             const updated = yield* Effect.promise(() => Operation.read(workspace, active.slug))
             const level = params.level
@@ -158,29 +166,27 @@ export const ScopeTool = Tool.define<typeof parameters, Metadata, never>(
                     }
                   : undefined,
               ),
-              metadata: { action: "set", level, slug: active.slug },
+              metadata: {
+                action: "set",
+                level,
+                slug: active.slug,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
-          if (active) {
-            yield* syncScopeState({
-              slug: active.slug,
-              label: active.label,
-              kind: active.kind,
-              target: active.target,
-              opsec: active.opsec,
-              in_scope: boundary.in_scope,
-              out_of_scope: boundary.out_of_scope,
-              summary: `scope status ${active.slug}`,
-              session_id: ctx.sessionID,
-              message_id: ctx.messageID,
-            }).pipe(Effect.catch(() => Effect.succeed("")))
-          }
-
+          // `status` is a read. It must not rewrite the enforcement policy it
+          // just read — the policy is written when the operation starts and
+          // when it is explicitly changed. (ENG-02 / RISK-PERSIST-04)
           return {
             title: `scope · ${active?.opsec ?? "normal"}`,
             output: outputFor(activeView),
-            metadata: { action: "status", level: active?.opsec ?? "normal", slug: active?.slug },
+            metadata: {
+              action: "status",
+              level: active?.opsec ?? "normal",
+              slug: active?.slug,
+              side_effects: Tool.sideEffects("read_only"),
+            },
           }
         }),
     }

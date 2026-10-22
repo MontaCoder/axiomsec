@@ -39,6 +39,14 @@ export const PlanExitTool = Tool.define(
       parameters: z.object({}),
       execute: (_params: {}, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          // Leaving plan mode hands control back to the operator agent, so it
+          // must respect the `plan_exit` permission rule. (SEC-03 / RISK-PERM-07)
+          yield* ctx.ask({
+            permission: "plan_exit",
+            patterns: ["*"],
+            always: [],
+            metadata: { action: "plan_exit" },
+          })
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
           const answers = yield* question.ask({

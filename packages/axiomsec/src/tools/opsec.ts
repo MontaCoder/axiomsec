@@ -17,6 +17,7 @@ type Metadata = {
   active_op?: string
   opsec: "normal" | "strict"
   action: "status" | "set"
+  side_effects?: Tool.SideEffectCategory[]
 }
 
 function formatStatus(active: { slug: string; label: string; opsec: "normal" | "strict" } | undefined): string {
@@ -51,16 +52,34 @@ export const OpsecTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: "opsec: level required",
                 output: "Provide level: \"normal\" or \"strict\" when action = set.",
-                metadata: { opsec: active?.opsec ?? "normal", action: "set" as const, active_op: active?.slug },
+                metadata: {
+                  opsec: active?.opsec ?? "normal",
+                  action: "set" as const,
+                  active_op: active?.slug,
+                  side_effects: Tool.sideEffects("read_only"),
+                },
               }
             }
             if (!active) {
               return {
                 title: "opsec: no active operation",
                 output: "No active operation to update. Start one with /pwn first.",
-                metadata: { opsec: "normal" as const, action: "set" as const },
+                metadata: {
+                  opsec: "normal" as const,
+                  action: "set" as const,
+                  side_effects: Tool.sideEffects("read_only"),
+                },
               }
             }
+            // Changing the enforcement posture re-enables the third-party intel
+            // blocklist and relaxes the strict unmatched->deny escalation, so it
+            // needs an explicit human decision. (SEC-03 / RISK-PERM-07)
+            yield* ctx.ask({
+              permission: "scope",
+              patterns: [`opsec:${params.level}`],
+              always: [],
+              metadata: { action: "set", level: params.level, slug: active.slug },
+            })
             yield* Effect.promise(() => Operation.setOpsec(workspace, active.slug, params.level!))
             const updated = yield* Effect.promise(() => Operation.read(workspace, active.slug))
             const level = params.level
@@ -88,7 +107,12 @@ export const OpsecTool = Tool.define<typeof parameters, Metadata, never>(
               output: formatStatus(
                 updated ? { slug: updated.slug, label: updated.label, opsec: level } : undefined,
               ),
-              metadata: { opsec: level, action: "set" as const, active_op: active.slug },
+              metadata: {
+                opsec: level,
+                action: "set" as const,
+                active_op: active.slug,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
@@ -99,6 +123,7 @@ export const OpsecTool = Tool.define<typeof parameters, Metadata, never>(
               opsec: active?.opsec ?? "normal",
               action: "status" as const,
               active_op: active?.slug,
+              side_effects: Tool.sideEffects("read_only"),
             },
           }
         }),

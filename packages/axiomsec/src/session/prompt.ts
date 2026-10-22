@@ -50,6 +50,10 @@ import { InstanceState } from "@/effect"
 import { TaskTool, type TaskPromptOps } from "@/tools/task"
 import { SessionRunState } from "./run-state"
 import { EffectBridge } from "@/effect"
+import { Cyber } from "@/core/cyber"
+import { OperationResolver } from "@/core/operation"
+import { Instance } from "@/project/instance"
+import { redactValue } from "@/core/replay/redact"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -349,7 +353,7 @@ At the end of planning, after questions are resolved and the plan file is comple
         const run = yield* runner()
         const promptOps = yield* ops()
 
-        const context = (args: any, options: ToolExecutionOptions): Tool.Context => ({
+        const context = (toolID: string, args: any, options: ToolExecutionOptions): Tool.Context => ({
           sessionID: input.session.id,
           abort: options.abortSignal!,
           messageID: input.processor.message.id,
@@ -366,7 +370,10 @@ At the end of planning, after questions are resolved and the plan file is comple
                   title: val.title,
                   metadata: val.metadata,
                   status: "running",
-                  input: args,
+                  // The session record is persisted and exported, so secret
+                  // arguments must be redacted here too — not only in the
+                  // ledger. (SEC-06 / RISK-SECRET-05)
+                  input: Tool.redactToolInput(toolID, args) as Record<string, any>,
                   time: { start: Date.now() },
                 },
               }
@@ -395,7 +402,7 @@ At the end of planning, after questions are resolved and the plan file is comple
             execute(args, options) {
               return run.promise(
                 Effect.gen(function* () {
-                  const ctx = context(args, options)
+                  const ctx = context(item.id, args, options)
                   yield* plugin.trigger(
                     "tool.execute.before",
                     { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
@@ -430,22 +437,52 @@ At the end of planning, after questions are resolved and the plan file is comple
           const execute = item.execute
           if (!execute) continue
 
+          // MCP tools are third-party code. They get their own permission
+          // namespace so an operator can allow, deny or ask per server, and
+          // they are ledgered like any other tool call. (SEC-03 / RISK-AUDIT-02)
+          const permission = `mcp:${key}`
+
           const schema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
           const transformed = ProviderTransform.schema(input.model, schema)
           item.inputSchema = jsonSchema(transformed)
           item.execute = (args, opts) =>
             run.promise(
               Effect.gen(function* () {
-                const ctx = context(args, opts)
+                const ctx = context(key, args, opts)
                 yield* plugin.trigger(
                   "tool.execute.before",
                   { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
                   { args },
                 )
-                yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
+                const operation = yield* Effect.promise(() =>
+                  OperationResolver.resolveOperation({
+                    workspace: Instance.directory,
+                    sessionID: ctx.sessionID,
+                  }).catch(() => ({ source: "none" as const, slug: undefined })),
+                )
+                const callEvent = yield* Cyber.appendLedger({
+                  operation_slug: operation.slug,
+                  kind: "tool.called",
+                  source: key,
+                  session_id: ctx.sessionID,
+                  message_id: ctx.messageID,
+                  summary: `${key} called`,
+                  data: { tool: key, call_id: opts.toolCallId, input: redactValue(args, "on") },
+                }).pipe(Effect.catch(() => Effect.succeed("")))
+                yield* ctx.ask({ permission, metadata: { tool: key }, patterns: ["*"], always: [] })
                 const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.promise(() =>
                   execute(args, opts),
                 )
+                yield* Cyber.appendLedger({
+                  operation_slug: operation.slug,
+                  kind: "tool.completed",
+                  source: key,
+                  session_id: ctx.sessionID,
+                  message_id: ctx.messageID,
+                  status: "completed",
+                  summary: `${key} completed`,
+                  data: { tool: key, call_id: opts.toolCallId, source_event_id: callEvent },
+                }).pipe(Effect.catch(() => Effect.succeed("")))
                 yield* plugin.trigger(
                   "tool.execute.after",
                   { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId, args },
