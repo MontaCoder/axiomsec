@@ -21,6 +21,7 @@ import { Question } from "@/question"
 import { errorMessage } from "@/support/error"
 import { Log } from "@/support"
 import { isRecord } from "@/support/record"
+import { redactToolInput } from "@/tools/tool"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -333,7 +334,10 @@ export namespace SessionProcessor {
                 state: {
                   ...match.state,
                   status: "running",
-                  input: value.input,
+                  // The tool part is persisted and exported. Redact secret
+                  // arguments here, before the first write, rather than only
+                  // in the later metadata update. (SEC-06 / RISK-SECRET-05)
+                  input: redactToolInput(value.toolName, value.input) as Record<string, any>,
                   time: { start: Date.now() },
                 },
                 metadata: match.metadata?.providerExecuted

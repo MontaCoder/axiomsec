@@ -128,9 +128,36 @@ export namespace Flock {
     }
   }
 
+  /** True/undefined when the owner may still hold the lock, false when it cannot. */
+  async function ownerAlive(metaPath: string): Promise<boolean | undefined> {
+    const raw = await readFile(metaPath, "utf8").catch(() => undefined)
+    if (!raw) return undefined
+    try {
+      const meta = JSON.parse(raw) as { pid?: unknown; hostname?: unknown }
+      if (meta.hostname !== os.hostname()) return undefined
+      if (typeof meta.pid !== "number" || !Number.isInteger(meta.pid) || meta.pid <= 0) return undefined
+      if (meta.pid === process.pid) return true
+      try {
+        process.kill(meta.pid, 0)
+        return true
+      } catch (err) {
+        // ESRCH: the PID no longer exists. EPERM (and anything else) means it
+        // may exist but we cannot signal it, so it is not safe to steal.
+        return code(err) === "ESRCH" ? false : true
+      }
+    } catch {
+      return undefined
+    }
+  }
+
   async function stale(lockDir: string, heartbeatPath: string, metaPath: string, staleMs: number) {
-    // Stale detection allows automatic recovery after crashed owners.
+    // Stale detection allows automatic recovery after crashed owners. An owner
+    // whose process is gone can be replaced immediately; waiting for the full
+    // heartbeat age made the next invocation stall for a minute after any
+    // `process.exit` that skipped lock cleanup. (RISK-PERSIST-10)
     const now = wall()
+    if ((await ownerAlive(metaPath)) === false) return true
+
     const heartbeat = await stats(heartbeatPath)
     if (heartbeat) {
       return now - heartbeat.mtimeMs > staleMs

@@ -640,6 +640,7 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
                 concurrency: opts.concurrency,
                 timeout: opts.timeout,
                 filterStatus: opts.filterStatus,
+                allowUrl,
               })
             }
             if (params.mode === "js") {
@@ -785,10 +786,11 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
 
 function summarize(mode: Params["mode"], result: unknown): string | undefined {
   const r = result as Record<string, unknown>
+  const count = (value: unknown) => (typeof value === "number" ? value : 0)
   if (mode === "crawl") return `crawl: ${(r.urls as string[] | undefined)?.length ?? 0} urls, ${(r.forms as unknown[] | undefined)?.length ?? 0} forms`
-  if (mode === "dir-fuzz") return `dir-fuzz: ${(r.found as unknown[] | undefined)?.length ?? 0} paths / ${r.testedCount ?? 0} tested`
+  if (mode === "dir-fuzz") return `dir-fuzz: ${(r.found as unknown[] | undefined)?.length ?? 0} paths / ${count(r.testedCount)} tested`
   if (mode === "js") return `js: ${(r.endpoints as unknown[] | undefined)?.length ?? 0} endpoints, ${(r.secrets as unknown[] | undefined)?.length ?? 0} secrets`
-  if (mode === "ports") return `ports: ${(r.openPorts as unknown[] | undefined)?.length ?? 0} open / ${r.closedCount ?? 0} closed`
+  if (mode === "ports") return `ports: ${(r.openPorts as unknown[] | undefined)?.length ?? 0} open / ${count(r.closedCount)} closed`
   if (mode === "service") return `service: ${(r.services as unknown[] | undefined)?.length ?? 0} identified`
   return undefined
 }

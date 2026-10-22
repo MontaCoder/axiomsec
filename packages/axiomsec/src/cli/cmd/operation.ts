@@ -32,7 +32,9 @@ export const OperationListCommand = cmd({
   handler: async (args) => {
     const ops = await Operation.list(workspace())
     if (args.format === "json") {
-      UI.println(JSON.stringify(ops, null, 2))
+      // Machine-readable output belongs on stdout so `... --format json > ops.json`
+      // and pipes work. UI.println writes progress to stderr.
+      process.stdout.write(JSON.stringify(ops, null, 2) + "\n")
       return
     }
     UI.println(formatTable(ops))
@@ -100,7 +102,7 @@ export const OperationShowCommand = cmd({
         UI.error(`operation notebook not found: ${slug}`)
         process.exit(1)
       }
-      UI.println(content)
+      process.stdout.write(content + "\n")
       return
     }
 
@@ -116,12 +118,12 @@ export const OperationShowCommand = cmd({
         UI.error(`context pack not found: ${slug}`)
         process.exit(1)
       }
-      UI.println(context)
+      process.stdout.write(context + "\n")
       return
     }
 
     if (args.format === "json") {
-      UI.println(
+      process.stdout.write(
         JSON.stringify(
           {
             operation: info,
@@ -143,7 +145,7 @@ export const OperationShowCommand = cmd({
           },
           null,
           2,
-        ),
+        ) + "\n",
       )
       return
     }
@@ -169,7 +171,7 @@ export const OperationShowCommand = cmd({
       lines.push("")
       lines.push(context)
     }
-    UI.println(lines.join("\n"))
+    process.stdout.write(lines.join("\n") + "\n")
   },
 })
 

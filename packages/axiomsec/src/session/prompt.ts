@@ -437,10 +437,12 @@ At the end of planning, after questions are resolved and the plan file is comple
           const execute = item.execute
           if (!execute) continue
 
-          // MCP tools are third-party code. They get their own permission
-          // namespace so an operator can allow, deny or ask per server, and
-          // they are ledgered like any other tool call. (SEC-03 / RISK-AUDIT-02)
-          const permission = `mcp:${key}`
+          // MCP tools are third-party code. They use the `mcp` permission so
+          // the default `mcp: "ask"` rule actually matches; the tool key is the
+          // pattern, so an operator can scope a rule to one server/tool. A
+          // `mcp:<key>` permission never matched the default rule and fell
+          // through to the catch-all allow. (SEC-03 / RISK-AUDIT-02)
+          const permission = "mcp"
 
           const schema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
           const transformed = ProviderTransform.schema(input.model, schema)
@@ -469,10 +471,31 @@ At the end of planning, after questions are resolved and the plan file is comple
                   summary: `${key} called`,
                   data: { tool: key, call_id: opts.toolCallId, input: redactValue(args, "on") },
                 }).pipe(Effect.catch(() => Effect.succeed("")))
-                yield* ctx.ask({ permission, metadata: { tool: key }, patterns: ["*"], always: [] })
-                const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.promise(() =>
-                  execute(args, opts),
+                const outcome = yield* Effect.exit(
+                  Effect.gen(function* () {
+                    yield* ctx.ask({
+                      permission,
+                      metadata: { tool: key },
+                      patterns: [key],
+                      always: [],
+                    })
+                    return yield* Effect.promise(() => execute(args, opts))
+                  }),
                 )
+                if (Exit.isFailure(outcome)) {
+                  yield* Cyber.appendLedger({
+                    operation_slug: operation.slug,
+                    kind: "tool.error",
+                    source: key,
+                    session_id: ctx.sessionID,
+                    message_id: ctx.messageID,
+                    status: "error",
+                    summary: `${key} failed`,
+                    data: { tool: key, call_id: opts.toolCallId, source_event_id: callEvent, reason: "execution failed" },
+                  }).pipe(Effect.catch(() => Effect.void))
+                  return yield* Effect.failCause(outcome.cause)
+                }
+                const result: Awaited<ReturnType<NonNullable<typeof execute>>> = outcome.value
                 yield* Cyber.appendLedger({
                   operation_slug: operation.slug,
                   kind: "tool.completed",
@@ -1093,7 +1116,6 @@ At the end of planning, after questions are resolved and the plan file is comple
                   let limit: number | undefined
                   const range = { start: url.searchParams.get("start"), end: url.searchParams.get("end") }
                   if (range.start != null) {
-                    const filePathURI = part.url.split("?")[0]
                     let start = parseInt(range.start)
                     let end = range.end ? parseInt(range.end) : undefined
                     if (start === end) {
@@ -1302,8 +1324,13 @@ At the end of planning, after questions are resolved and the plan file is comple
             permissions.push({ permission: t, action: enabled ? "allow" : "deny", pattern: "*" })
           }
           if (permissions.length > 0) {
-            session.permission = permissions
-            yield* sessions.setPermission({ sessionID: session.id, permission: permissions })
+            // Per-prompt tool toggles must not discard the session's operator
+            // policy: `task` passes todowrite/task=false and used to replace a
+            // child session's inherited deny rules wholesale. Session rules are
+            // last so they win over a per-prompt allow. (RISK-PERM-11)
+            const merged = Permission.merge(permissions, session.permission ?? [])
+            session.permission = merged
+            yield* sessions.setPermission({ sessionID: session.id, permission: merged })
           }
 
           if (input.noReply === true) return message

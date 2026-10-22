@@ -5,6 +5,23 @@ import { type Config } from "./gen/client/types.gen.js"
 import { AxiomSecClient } from "./gen/sdk.gen.js"
 export { type Config as AxiomSecClientConfig, AxiomSecClient }
 
+function toHeaders(input: Config["headers"]): Headers {
+  const headers = new Headers()
+  if (!input) return headers
+  if (input instanceof Headers) {
+    input.forEach((value, key) => headers.set(key, value))
+    return headers
+  }
+  if (Array.isArray(input)) {
+    for (const [key, value] of input) headers.set(key, value)
+    return headers
+  }
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "string") headers.set(key, value)
+  }
+  return headers
+}
+
 function pick(value: string | null, fallback?: string, encode?: (value: string) => string) {
   if (!value) return
   if (!fallback) return value
@@ -56,18 +73,11 @@ export function createAxiomSecClient(config?: Config & { directory?: string; exp
     }
   }
 
-  if (config?.directory) {
-    config.headers = {
-      ...config.headers,
-      "x-axiomsec-directory": encodeURIComponent(config.directory),
-    }
-  }
-
-  if (config?.experimental_workspaceID) {
-    config.headers = {
-      ...config.headers,
-      "x-axiomsec-workspace": config.experimental_workspaceID,
-    }
+  if (config?.directory || config?.experimental_workspaceID) {
+    const headers = toHeaders(config.headers)
+    if (config.directory) headers.set("x-axiomsec-directory", encodeURIComponent(config.directory))
+    if (config.experimental_workspaceID) headers.set("x-axiomsec-workspace", config.experimental_workspaceID)
+    config.headers = headers
   }
 
   const client = createClient(config)

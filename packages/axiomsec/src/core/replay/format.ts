@@ -116,7 +116,12 @@ function* eventsFor(
               status: state.status,
               duration_ms: dur,
               output: redactValue(output, mode),
-              error: state.status === "error" ? (state as { error?: string }).error : undefined,
+              error:
+                state.status === "error"
+                  ? typeof (state as { error?: unknown }).error === "string"
+                    ? redactString((state as { error: string }).error, mode)
+                    : undefined
+                  : undefined,
             },
           }
         }

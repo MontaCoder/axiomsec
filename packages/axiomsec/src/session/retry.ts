@@ -14,6 +14,13 @@ export namespace SessionRetry {
   export const RETRY_BACKOFF_FACTOR = 2
   export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds
   export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for setTimeout
+  // A rate limit that never clears must not turn a headless run into an
+  // unbounded loop. Ten attempts covers a transient outage (~2.5 minutes of
+  // backoff); a daily quota is detected separately and is not retried at all.
+  // (RISK-TIME-03)
+  export const RETRY_MAX_ATTEMPTS = 10
+
+  const PERMANENT_QUOTA = /free-models-per-day|insufficient credits|insufficient_quota|quota exceeded/i
 
   function cap(ms: number) {
     return Math.min(ms, RETRY_MAX_DELAY)
@@ -61,6 +68,11 @@ export namespace SessionRetry {
       // even when the provider SDK doesn't explicitly mark them as retryable.
       if (!error.data.isRetryable && !(status !== undefined && status >= 500)) return undefined
       if (error.data.responseBody?.includes("FreeUsageLimitError")) return GO_UPSELL_MESSAGE
+      // A free-tier daily quota or an exhausted credit balance is permanent
+      // until an operator acts. Retrying it only delays the error.
+      if (PERMANENT_QUOTA.test(error.data.responseBody ?? "") || PERMANENT_QUOTA.test(error.data.message)) {
+        return undefined
+      }
       return error.data.message.includes("Overloaded") ? "Provider is overloaded" : error.data.message
     }
 
@@ -104,6 +116,12 @@ export namespace SessionRetry {
     return undefined
   }
 
+  /** Decide whether one more attempt is allowed. Exposed for regression tests. */
+  export function shouldRetry(error: Err, attempt: number) {
+    if (attempt >= RETRY_MAX_ATTEMPTS) return undefined
+    return retryable(error)
+  }
+
   export function policy(opts: {
     parse: (error: unknown) => Err
     set: (input: { attempt: number; message: string; next: number }) => Effect.Effect<void>
@@ -111,7 +129,7 @@ export namespace SessionRetry {
     return Schedule.fromStepWithMetadata(
       Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
         const error = opts.parse(meta.input)
-        const message = retryable(error)
+        const message = shouldRetry(error, meta.attempt)
         if (!message) return Cause.done(meta.attempt)
         return Effect.gen(function* () {
           const wait = delay(meta.attempt, MessageV2.APIError.isInstance(error) ? error : undefined)

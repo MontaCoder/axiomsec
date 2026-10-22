@@ -31,6 +31,30 @@ function evidenceDir(workspace: string, slug: string): string {
   return dir
 }
 
+/**
+ * Extensions are part of a filesystem name. Only a short alphanumeric token is
+ * accepted so a malformed `ext` cannot add path segments or escape the evidence
+ * directory. (SEC-01 / SEC-04)
+ */
+function safeExt(input?: string): string {
+  const cleaned = (input ?? "")
+    .replace(/^\.+/, "")
+    .replace(/[^A-Za-z0-9]+/g, "")
+    .slice(0, 16)
+  return cleaned || "bin"
+}
+
+/**
+ * `path.extname` treats a dotfile such as `.env` as having no extension. A
+ * dotfile is still a meaningful text artifact, so use its name as the token.
+ */
+function extFromPath(file: string): string | undefined {
+  const ext = path.extname(file)
+  if (ext) return ext
+  const base = path.basename(file)
+  return base.startsWith(".") && base.length > 1 ? base.slice(1) : undefined
+}
+
 function sniffExtFromMime(mime?: string): string {
   if (!mime) return "bin"
   const lower = mime.toLowerCase()
@@ -94,6 +118,10 @@ export async function get(workspace: string, slug: string, sha256: string): Prom
     const { entries } = await readManifest(workspace, slug)
     const entry = entries.find((e) => e.sha256 === sha256)
     if (!entry) return undefined
+    // A hand-edited manifest must not be able to redirect a read outside the
+    // evidence directory. Fail closed when the stored extension is not a plain
+    // token. (SEC-01)
+    if (safeExt(entry.ext) !== entry.ext) return undefined
     const p = path.join(evidenceDir(workspace, slug), `${entry.sha256}.${entry.ext}`)
     const bytes = await readFile(p).catch(() => undefined)
     if (!bytes) return undefined
@@ -122,18 +150,31 @@ export async function put(
         : await readFile(input.path)
 
   const sha256 = createHash("sha256").update(bytes).digest("hex")
-  const ext = (meta.ext ?? sniffExtFromMime(meta.mime)).replace(/^\./, "")
+  const inferred =
+    meta.ext ??
+    (meta.mime
+      ? sniffExtFromMime(meta.mime)
+      : typeof input === "object" && "path" in input
+        ? extFromPath(input.path)
+        : "bin")
+  const ext = safeExt(inferred)
   const dir = evidenceDir(workspace, slug)
   await mkdir(dir, { recursive: true })
   const file = path.join(dir, `${sha256}.${ext}`)
 
   const existing = await stat(file).catch(() => undefined)
   if (!existing) {
-    // Write to a temp file and rename: a crash must not leave a truncated
-    // artifact under a digest that says it is complete. (SEC-04 / RISK-PERSIST-05)
-    const tmp = path.join(dir, `.${sha256}.${ext}.tmp`)
+    // Write to a unique temp file and rename: a crash must not leave a
+    // truncated artifact under a digest that says it is complete, and two
+    // concurrent puts of the same bytes must not collide on the temp name.
+    // A rename that loses the race is success when the destination exists.
+    // (SEC-04 / RISK-PERSIST-05)
+    const tmp = path.join(dir, `.${sha256}.${ext}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`)
     await writeFile(tmp, bytes)
-    await rename(tmp, file)
+    await rename(tmp, file).catch(async (error: NodeJS.ErrnoException) => {
+      if (await stat(file).catch(() => undefined)) return
+      throw error
+    })
   }
 
   return withFileLock(lockKey(workspace, slug), async () => {

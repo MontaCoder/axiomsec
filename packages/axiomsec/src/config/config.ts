@@ -33,7 +33,7 @@ import * as ConfigPaths from "./paths"
 import type { ConsoleState } from "./console-state"
 import { AppFileSystem } from "@axiomsec/shared/filesystem"
 import { InstanceState } from "@/effect"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option } from "effect"
+import { Context, Duration, Effect, Exit, Fiber, Layer } from "effect"
 import { EffectFlock } from "@axiomsec/shared/util/effect-flock"
 
 import { isPathPluginSpec, parsePluginSpecifier, resolvePathPluginTarget } from "@/plugins/shared"
@@ -968,7 +968,7 @@ export const Info = z
           if (!data) return true
           if (typeof data === "boolean") return true
 
-          return Object.entries(data).every(([id, config]) => {
+          return Object.entries(data).every(([_id, config]) => {
             if (config.disabled) return true
             return Boolean(config.extensions)
           })
@@ -1031,7 +1031,7 @@ export type Info = z.output<typeof Info> & {
 type State = {
   config: Info
   directories: string[]
-  deps: Fiber.Fiber<void, never>[]
+  deps: Fiber.Fiber<void>[]
   consoleState: ConsoleState
 }
 
@@ -1130,7 +1130,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* AppFileSystem.Service
     const authSvc = yield* Auth.Service
-    const env = yield* Env.Service
+    const _env = yield* Env.Service
     const npmSvc = yield* Npm.Service
 
     const readConfigFile = Effect.fnUntraced(function* (filepath: string) {
@@ -1290,7 +1290,7 @@ export const layer = Layer.effect(
           if (!response.ok) {
             throw new Error(`failed to fetch remote config from ${url}: ${response.status}`)
           }
-          const wellknown = (yield* Effect.promise(() => response.json())) as any
+          const wellknown = (yield* Effect.promise(() => response.json()))
           const remoteConfig = wellknown.config ?? {}
           if (!remoteConfig.$schema) remoteConfig.$schema = "https://axiomsec.ai/config.json"
           const source = `${url}/.well-known/axiomsec`
@@ -1328,7 +1328,7 @@ export const layer = Layer.effect(
         log.debug("loading config from AXIOMSEC_CONFIG_DIR", { path: Flag.AXIOMSEC_CONFIG_DIR })
       }
 
-      const deps: Fiber.Fiber<void, never>[] = []
+      const deps: Fiber.Fiber<void>[] = []
 
       for (const dir of unique(directories)) {
         if (dir.endsWith(".axiomsec") || dir === Flag.AXIOMSEC_CONFIG_DIR) {
@@ -1341,25 +1341,35 @@ export const layer = Layer.effect(
           }
         }
 
-        const dep = yield* setupConfigDir(dir).pipe(
-          Effect.exit,
-          Effect.tap((exit) =>
-            Exit.isFailure(exit)
-              ? Effect.sync(() => {
-                  log.warn("background dependency install failed", { dir, error: String(exit.cause) })
-                })
-              : Effect.void,
-          ),
-          Effect.asVoid,
-          Effect.forkScoped,
-        )
-        deps.push(dep)
-
         result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => loadCommand(dir)))
         result.agent = mergeDeep(result.agent, yield* Effect.promise(() => loadAgent(dir)))
         result.agent = mergeDeep(result.agent, yield* Effect.promise(() => loadMode(dir)))
         const list = yield* Effect.promise(() => loadPlugin(dir))
         yield* track(dir, list)
+
+        // `@axiomsec/plugin` is only needed when this directory can actually
+        // load a plugin or a custom tool that imports it. Installing it
+        // unconditionally wrote node_modules into every project's .axiomsec,
+        // contacted npm on the first run, and a background install kept the CLI
+        // alive for ~60s after the command had already printed its result.
+        // (RISK-CONFIG-01)
+        const hasToolDir = existsSync(path.join(dir, "tool")) || existsSync(path.join(dir, "tools"))
+        const needsDependencies = list.length > 0 || hasToolDir || (result.plugin?.length ?? 0) > 0
+        if (needsDependencies) {
+          const dep = yield* setupConfigDir(dir).pipe(
+            Effect.exit,
+            Effect.tap((exit) =>
+              Exit.isFailure(exit)
+                ? Effect.sync(() => {
+                    log.warn("background dependency install failed", { dir, error: String(exit.cause) })
+                  })
+                : Effect.void,
+            ),
+            Effect.asVoid,
+            Effect.forkScoped,
+          )
+          deps.push(dep)
+        }
       }
 
       if (process.env.AXIOMSEC_CONFIG_CONTENT) {

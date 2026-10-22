@@ -53,35 +53,41 @@ function identifyService(banner: string): string | undefined {
 function probePort(host: string, port: number, timeout: number): Promise<PortResult> {
   const start = Date.now()
   return new Promise((resolve) => {
-    const socket = connect({ host, port, timeout }, () => {
-      socket.setTimeout(2000)
+    const socket = connect({ host, port })
+    let connected = false
+    let settled = false
 
-      socket.once("data", (data) => {
-        const banner = data.toString("utf-8").trim()
-        socket.destroy()
-        resolve({
-          port,
-          open: true,
-          service: identifyService(banner),
-          version: banner.slice(0, 100),
-          elapsed: Date.now() - start,
-        })
-      })
+    const finish = (result: PortResult) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(result)
+    }
 
-      socket.once("timeout", () => {
-        socket.destroy()
-        resolve({ port, open: true, elapsed: Date.now() - start })
+    socket.setTimeout(timeout)
+    socket.once("connect", () => {
+      connected = true
+      // Wait for a banner, but keep the caller's bound so a scan of silent
+      // ports does not outlive its timeout.
+      socket.setTimeout(Math.min(2000, timeout))
+    })
+    socket.once("data", (data) => {
+      const banner = data.toString("utf-8").trim()
+      finish({
+        port,
+        open: true,
+        service: identifyService(banner),
+        version: banner.slice(0, 100),
+        elapsed: Date.now() - start,
       })
     })
-
-    socket.on("error", () => {
-      socket.destroy()
-      resolve({ port, open: false, elapsed: Date.now() - start })
+    socket.once("timeout", () => {
+      // An established TCP connection is open even if the peer sent no
+      // banner before the timeout.
+      finish({ port, open: connected, elapsed: Date.now() - start })
     })
-
-    socket.on("timeout", () => {
-      socket.destroy()
-      resolve({ port, open: false, elapsed: Date.now() - start })
+    socket.once("error", () => {
+      finish({ port, open: false, elapsed: Date.now() - start })
     })
   })
 }

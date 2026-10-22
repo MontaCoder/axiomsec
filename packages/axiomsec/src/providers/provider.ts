@@ -17,6 +17,7 @@ import { Instance } from "../project/instance"
 import { InstallationVersion } from "../installer/version"
 import { Flag } from "../flags/flag"
 import { iife } from "@/support/iife"
+import { exportAuthEnv } from "@/support/auth-env"
 import { Global } from "../globals"
 import path from "path"
 import { Effect, Layer, Context } from "effect"
@@ -264,10 +265,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const awsBearerToken = iife(() => {
         const envToken = process.env.AWS_BEARER_TOKEN_BEDROCK
         if (envToken) return envToken
-        if (auth?.type === "api") {
-          process.env.AWS_BEARER_TOKEN_BEDROCK = auth.key
-          return auth.key
-        }
+        if (auth?.type === "api") return exportAuthEnv("AWS_BEARER_TOKEN_BEDROCK", auth.key)
         return undefined
       })
 
@@ -472,10 +470,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const envServiceKey = iife(() => {
         const envAICoreServiceKey = process.env.AICORE_SERVICE_KEY
         if (envAICoreServiceKey) return envAICoreServiceKey
-        if (auth?.type === "api") {
-          process.env.AICORE_SERVICE_KEY = auth.key
-          return auth.key
-        }
+        if (auth?.type === "api") return exportAuthEnv("AICORE_SERVICE_KEY", auth.key)
         return undefined
       })
       const deploymentId = process.env.AICORE_DEPLOYMENT_ID

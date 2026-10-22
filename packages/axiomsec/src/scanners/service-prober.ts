@@ -38,68 +38,60 @@ const PROBES: { name: string; probe: Buffer | string; match: RegExp; protocol: s
 
 function probeService(host: string, port: number, timeout: number): Promise<ServiceInfo | null> {
   return new Promise((resolve) => {
-    let identified = false
+    const socket = connect({ host, port })
+    let connected = false
+    let settled = false
+    let probed = false
 
-    const socket = connect({ host, port, timeout }, () => {
-      socket.setTimeout(2000)
+    const finish = (info: ServiceInfo | null) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(info)
+    }
 
-      socket.once("data", (data) => {
-        if (identified) return
-        const banner = data.toString("utf-8").trim()
-
-        for (const probe of PROBES) {
-          if (probe.match.test(banner)) {
-            identified = true
-            socket.destroy()
-            resolve({
-              port,
-              protocol: probe.protocol,
-              service: probe.name,
-              banner: banner.slice(0, 200),
-              tls: false,
-            })
-            return
+    const identify = (banner: string): ServiceInfo => {
+      for (const probe of PROBES) {
+        if (probe.match.test(banner)) {
+          return {
+            port,
+            protocol: probe.protocol,
+            service: probe.name,
+            banner: banner.slice(0, 200),
+            tls: false,
           }
         }
+      }
+      return {
+        port,
+        protocol: "unknown",
+        service: "unknown",
+        banner: banner.slice(0, 200),
+        tls: false,
+      }
+    }
 
-        // Unknown service with banner
-        socket.destroy()
-        resolve({
-          port,
-          protocol: "unknown",
-          service: "unknown",
-          banner: banner.slice(0, 200),
-          tls: false,
-        })
-      })
-
-      socket.once("timeout", () => {
-        if (identified) return
-        // No spontaneous banner — try active probes
-        for (const probe of PROBES) {
-          if (probe.probe) {
-            socket.write(probe.probe)
-            break
-          }
-        }
-        setTimeout(() => {
-          if (!identified) {
-            socket.destroy()
-            resolve({ port, protocol: "unknown", service: "filtered", tls: false })
-          }
-        }, 2000)
-      })
+    socket.setTimeout(timeout)
+    socket.once("connect", () => {
+      connected = true
+      socket.setTimeout(Math.min(2000, timeout))
     })
-
-    socket.on("error", () => {
-      socket.destroy()
-      resolve(null)
+    socket.once("data", (data) => finish(identify(data.toString("utf-8").trim())))
+    socket.once("timeout", () => {
+      if (!connected) return finish(null)
+      if (!probed) {
+        // No spontaneous banner — send the first active probe and wait once.
+        const active = PROBES.find((probe) => probe.probe)
+        if (!active) return finish({ port, protocol: "unknown", service: "unknown", tls: false })
+        probed = true
+        socket.setTimeout(Math.min(2000, timeout))
+        socket.write(active.probe)
+        return
+      }
+      // The port accepted a connection but did not answer any probe.
+      finish({ port, protocol: "unknown", service: "filtered", tls: false })
     })
-
-    socket.on("timeout", () => {
-      socket.destroy()
-      if (!identified) resolve(null)
-    })
+    socket.once("error", () => finish(null))
   })
 }
 

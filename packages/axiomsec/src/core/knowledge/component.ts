@@ -82,18 +82,18 @@ export function normalizeComponent(query: string): NormalizedComponent | undefin
     .trim()
 
   const patterns: Array<RegExp> = [
-    /\b(nginx)\s+([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b(nginx)\s*\/\s*([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b(open(?:bsd\s+)?ssh)\s+([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b(open(?:bsd\s+)?ssh)\s*[_/]\s*([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b(apache(?:\s+httpd)?|httpd)\s+([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b(apache(?:\s+httpd)?|httpd)\s*\/\s*([0-9][0-9A-Za-z.+~:-]*)\b/i,
-    /\b([a-z][a-z0-9.+-]{1,64})\s+([0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(nginx)\s+(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(nginx)\s*\/\s*(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(open(?:bsd\s+)?ssh)\s+(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(open(?:bsd\s+)?ssh)\s*[_/]\s*(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(apache(?:\s+httpd)?|httpd)\s+(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b(apache(?:\s+httpd)?|httpd)\s*\/\s*(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
+    /\b([a-z][a-z0-9.+-]{1,64})\s+(v?[0-9][0-9A-Za-z.+~:-]*)\b/i,
   ]
   for (const pattern of patterns) {
     const match = normalized.match(pattern)
     if (!match) continue
-    const name = aliasFor(match[1]!.toLowerCase())
+    const name = aliasFor(match[1].toLowerCase())
     const data = PRODUCT_ALIASES[name]
     return {
       raw,
@@ -109,7 +109,7 @@ export function normalizeComponent(query: string): NormalizedComponent | undefin
 
   const token = normalized.match(/\b(nginx|open(?:bsd\s+)?ssh|apache(?:\s+httpd)?|httpd)\b/i)
   if (token) {
-    const name = aliasFor(token[1]!.toLowerCase())
+    const name = aliasFor(token[1].toLowerCase())
     const data = PRODUCT_ALIASES[name]
     return {
       raw,

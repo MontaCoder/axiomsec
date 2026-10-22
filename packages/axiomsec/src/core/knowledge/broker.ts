@@ -140,14 +140,13 @@ async function fetchJSON(
   init?: RequestInit,
 ): Promise<{ json?: unknown; source: KnowledgeSource }> {
   const fetchedAt = deps.now()
+  const headers = new Headers(init?.headers)
+  if (!headers.has("Accept")) headers.set("Accept", "application/json")
+  if (!headers.has("User-Agent")) headers.set("User-Agent", USER_AGENT)
   try {
     const response = await deps.fetch(url, {
       ...init,
-      headers: {
-        Accept: "application/json",
-        "User-Agent": USER_AGENT,
-        ...(init?.headers ?? {}),
-      },
+      headers,
       signal: AbortSignal.timeout(15_000),
     })
     if (!response.ok) {
@@ -207,9 +206,9 @@ function normalizeEcosystem(input: string) {
 
 function parsePackageSpec(query: string): PackageSpec | undefined {
   const purl = query.match(/^pkg:([^/]+)\/([^@\s]+)(?:@([^\s]+))?$/i)
-  if (purl) return { ecosystem: normalizeEcosystem(purl[1]!), name: purl[2]!, version: purl[3] }
+  if (purl) return { ecosystem: normalizeEcosystem(purl[1]), name: purl[2], version: purl[3] }
   const direct = query.match(/^(npm|pypi|python|go|golang|maven|nuget|rubygems|ruby|cargo|rust|crates\.io|composer|php|packagist|node):([^@\s]+)(?:@([^\s]+))?$/i)
-  if (direct) return { ecosystem: normalizeEcosystem(direct[1]!), name: direct[2]!, version: direct[3] }
+  if (direct) return { ecosystem: normalizeEcosystem(direct[1]), name: direct[2], version: direct[3] }
   return undefined
 }
 

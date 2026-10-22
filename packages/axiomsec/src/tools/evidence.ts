@@ -45,11 +45,36 @@ function matchesNeedle(value: unknown, needleForms: string[]) {
   })
 }
 
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "md",
+  "json",
+  "jsonl",
+  "html",
+  "htm",
+  "xml",
+  "har",
+  "replay",
+  "log",
+  "env",
+  "yml",
+  "yaml",
+  "csv",
+  "tsv",
+  "js",
+  "ts",
+  "py",
+  "sh",
+  "conf",
+  "ini",
+  "sql",
+])
+
 function textLike(entry: { mime?: string; ext: string }) {
   return (
     entry.mime?.startsWith("text/") ||
     entry.mime === "application/json" ||
-    ["txt", "md", "json", "html", "har", "replay"].includes(entry.ext)
+    TEXT_EXTENSIONS.has(entry.ext.toLowerCase())
   )
 }
 

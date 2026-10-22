@@ -94,6 +94,8 @@ export const SessionListCommand = cmd({
       const sessions = [...Session.list({ roots: true, limit: args.maxCount })]
 
       if (sessions.length === 0) {
+        // JSON consumers need a valid empty document, not an empty stream.
+        if (args.format === "json") console.log("[]")
         return
       }
 

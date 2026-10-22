@@ -293,6 +293,7 @@ export const ReportTool = Tool.define<typeof parameters, Metadata, never>(
               action: "build",
               slug,
               phase: currentPhase,
+              available: true,
               bundle_dir: built.bundleDir,
               report_path: built.reportPath,
               manifest_path: built.manifestPath,

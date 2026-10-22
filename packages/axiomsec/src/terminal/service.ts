@@ -6,6 +6,7 @@ import type { Proc } from "#pty"
 import z from "zod"
 import { Log } from "../support"
 import { lazy } from "@/support/lazy"
+import { withoutAuthEnv } from "@/support/auth-env"
 import { Shell } from "@/shell/shell"
 import { Plugin } from "@/plugins"
 import { PtyID } from "./schema"
@@ -183,7 +184,7 @@ export const layer = Layer.effect(
       const cwd = input.cwd || s.dir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
       const env = {
-        ...process.env,
+        ...withoutAuthEnv(process.env),
         ...input.env,
         ...shell.env,
         TERM: "xterm-256color",

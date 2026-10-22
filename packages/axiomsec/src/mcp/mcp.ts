@@ -14,9 +14,9 @@ import { Log } from "../support"
 import { NamedError } from "@axiomsec/shared/util/error"
 import z from "zod/v4"
 import { Instance } from "../project/instance"
-import { Installation } from "../installer"
 import { InstallationVersion } from "../installer/version"
 import { withTimeout } from "@/support/timeout"
+import { withoutAuthEnv } from "@/support/auth-env"
 import { AppFileSystem } from "@axiomsec/shared/filesystem"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
@@ -386,7 +386,7 @@ export const layer = Layer.effect(
 
       return {
         client: undefined as MCPClient | undefined,
-        status: (lastStatus ?? { status: "failed", error: "Unknown error" }) as Status,
+        status: (lastStatus ?? { status: "failed", error: "Unknown error" }),
       }
     })
 
@@ -399,7 +399,7 @@ export const layer = Layer.effect(
         args,
         cwd,
         env: {
-          ...process.env,
+          ...withoutAuthEnv(process.env),
           ...(cmd === "axiomsec" ? { BUN_BE_BUN: "1" } : {}),
           ...mcp.environment,
         },

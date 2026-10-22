@@ -36,4 +36,7 @@ Use this tool for:
 - Capturing screenshots as evidence of security findings
 - Evaluating JavaScript to inspect page state or trigger behaviors
 
+WebRTC and WebTransport are disabled in the guarded context: they use UDP/QUIC
+directly and cannot be checked against the operation boundary.
+
 Requires Playwright and Chromium binaries. For static pages, prefer http_request instead.

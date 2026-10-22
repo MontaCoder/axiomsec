@@ -11,6 +11,9 @@ import * as OperationResolver from "@/core/operation/resolver"
 import * as OperationSnapshot from "@/core/operation/snapshot"
 import { redactValue } from "@/core/replay/redact"
 import { Instance } from "@/project/instance"
+import { Log } from "../support"
+
+const log = Log.create({ service: "tool" })
 
 interface Metadata {
   [key: string]: any
@@ -27,6 +30,61 @@ export const SIDE_EFFECT_CATEGORIES = [
 ] as const
 
 export type SideEffectCategory = (typeof SIDE_EFFECT_CATEGORIES)[number]
+
+/**
+ * Conservative contracts for tools whose result metadata does not carry a
+ * per-action `side_effects` array. Per-call metadata always wins. The policy
+ * suite requires every built-in tool id to appear here.
+ */
+export const DEFAULT_SIDE_EFFECTS: Record<string, readonly SideEffectCategory[]> = {
+  analyze: ["network", "mutates_target", "writes_ledger", "writes_facts", "writes_evidence"],
+  apply_patch: ["mutates_workspace"],
+  appsec_probe: ["network", "mutates_target", "writes_ledger", "writes_facts", "writes_evidence"],
+  autonomy: ["writes_ledger", "writes_facts"],
+  bash: ["network", "mutates_target", "mutates_workspace", "writes_ledger"],
+  binary_triage: ["network", "writes_ledger", "writes_facts", "writes_evidence"],
+  browser: ["network", "mutates_target"],
+  cloud_posture: ["network", "mutates_target", "writes_ledger", "writes_facts", "writes_evidence"],
+  codesearch: ["network", "read_only"],
+  container_surface: ["network", "mutates_target", "writes_ledger", "writes_facts", "writes_evidence"],
+  crypto: ["read_only"],
+  cve: ["network", "read_only"],
+  doctor: ["writes_ledger", "writes_facts"],
+  edit: ["mutates_workspace"],
+  evidence: ["writes_ledger", "writes_evidence"],
+  finding: ["writes_ledger", "writes_facts"],
+  glob: ["read_only"],
+  grep: ["read_only"],
+  http_request: ["network"],
+  iac_triage: ["network", "writes_ledger", "writes_facts", "writes_evidence"],
+  identity: ["mutates_workspace", "writes_ledger"],
+  interact: ["network", "mutates_target", "mutates_workspace"],
+  invalid: ["read_only"],
+  knowledge: ["network", "writes_ledger", "writes_facts", "writes_evidence"],
+  methodology: ["read_only"],
+  net: ["network", "mutates_target"],
+  observation: ["writes_ledger", "writes_facts"],
+  opsec: ["writes_ledger", "writes_facts"],
+  plan_exit: ["read_only"],
+  play: ["writes_ledger", "writes_facts", "mutates_workspace"],
+  pwn_bootstrap: ["mutates_workspace", "writes_ledger", "writes_facts"],
+  question: ["read_only"],
+  read: ["read_only"],
+  remediate: ["mutates_workspace", "writes_ledger", "writes_facts", "writes_evidence"],
+  report: ["writes_ledger", "writes_facts", "mutates_workspace"],
+  runbook: ["writes_ledger", "writes_facts", "mutates_workspace"],
+  scanner: ["network", "mutates_target", "writes_ledger", "writes_facts", "writes_evidence"],
+  scope: ["writes_ledger", "writes_facts"],
+  share: ["writes_ledger", "writes_facts", "mutates_workspace"],
+  skill: ["read_only"],
+  task: ["network", "mutates_target", "mutates_workspace", "writes_ledger", "writes_facts", "writes_evidence"],
+  todowrite: ["read_only"],
+  vault: ["mutates_workspace", "writes_ledger"],
+  webfetch: ["network"],
+  websearch: ["network"],
+  workspace: ["writes_ledger", "writes_facts", "mutates_workspace"],
+  write: ["mutates_workspace"],
+}
 
 // TODO: remove this hack
 export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
@@ -258,18 +316,10 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               ).pipe(Effect.catch(() => Effect.succeed({ source: "none" as const })))
             : { source: "none" as const }
           const toolCtx = { ...ctx, operation }
-          const validatedArgs = yield* Effect.try({
-            try: () => toolInfo.parameters.parse(args),
-            catch: (error) => {
-              if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-                return new Error(toolInfo.formatValidationError(error), { cause: error })
-              }
-              return new Error(
-                `The ${id} tool was called with invalid arguments: ${formatUnknownError(error)}.\nPlease rewrite the input so it satisfies the expected schema.`,
-                { cause: error },
-              )
-            },
-          })
+          // Audit the attempt before validating. Validation itself is part of
+          // the call; a malformed model argument must not disappear from the
+          // ledger, and it must be visible even when the tool never executes.
+          // (ENG-04 / RISK-AUDIT-05)
           const callEvent = yield* Cyber.appendLedger({
               operation_slug: operation.slug,
               kind: "tool.called",
@@ -280,10 +330,43 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               data: {
                 tool: id,
                 call_id: ctx.callID,
-                input: redactToolInput(id, validatedArgs),
+                input: redactToolInput(id, args),
               },
             })
             .pipe(Effect.catch(() => Effect.succeed("")))
+          const parsed = yield* Effect.exit(
+            Effect.try({
+              try: () => toolInfo.parameters.parse(args),
+              catch: (error) => {
+                if (error instanceof z.ZodError && toolInfo.formatValidationError) {
+                  return new Error(toolInfo.formatValidationError(error), { cause: error })
+                }
+                return new Error(
+                  `The ${id} tool was called with invalid arguments: ${formatUnknownError(error)}.\nPlease rewrite the input so it satisfies the expected schema.`,
+                  { cause: error },
+                )
+              },
+            }),
+          )
+          if (Exit.isFailure(parsed)) {
+            yield* Cyber.appendLedger({
+              operation_slug: operation.slug,
+              kind: "tool.error",
+              source: id,
+              session_id: ctx.sessionID,
+              message_id: ctx.messageID,
+              status: "error",
+              summary: `${id} failed validation`,
+              data: {
+                tool: id,
+                call_id: ctx.callID,
+                source_event_id: callEvent,
+                reason: "invalid arguments",
+              },
+            }).pipe(Effect.catch(() => Effect.void))
+            return yield* Effect.failCause(parsed.cause)
+          }
+          const validatedArgs = parsed.value
           const exit = yield* Effect.exit(execute(validatedArgs, toolCtx))
           if (Exit.isFailure(exit)) {
             yield* Cyber.appendLedger({
@@ -363,10 +446,15 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
 	            return yield* Effect.failCause(exit.cause)
           }
           const result = exit.value
-          const readOnlyResult = isReadOnlyResult(result.metadata)
+          const metadataWithEffects =
+            normalizedSideEffects(result.metadata).length > 0
+              ? result.metadata
+              : { ...result.metadata, side_effects: DEFAULT_SIDE_EFFECTS[id] ?? [] }
+          const readOnlyResult = isReadOnlyResult(metadataWithEffects)
           const workflowProgressEligible = workflowAware && !isOrientationToolCall(id, validatedArgs)
           let workflowProgressWritten = false
           let contextWritten = false
+          let completionLogged = false
           yield* Cyber.appendLedger({
               operation_slug: operation.slug,
               kind: "tool.completed",
@@ -380,10 +468,25 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                 call_id: ctx.callID,
                 source_event_id: callEvent,
                 title: result.title,
-                metadata: { ...result.metadata, operation },
+                metadata: { ...metadataWithEffects, operation },
               },
             })
-            .pipe(Effect.catch(() => Effect.succeed("")))
+            .pipe(
+              Effect.tap((eventID) =>
+                Effect.sync(() => {
+                  completionLogged = Boolean(callEvent) && Boolean(eventID)
+                }),
+              ),
+              Effect.catchCause((cause) =>
+                Effect.sync(() => {
+                  log.warn("tool.completed ledger write failed", {
+                    tool: id,
+                    call_id: ctx.callID,
+                    error: String(cause),
+                  })
+                }),
+              ),
+            )
 	          if (workflowProgressEligible && instance) {
 	            const workspace = instance.directory
 	            const slug = operation.slug
@@ -446,8 +549,8 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
 	          }
           const finalResult = {
             ...result,
-            metadata: sideEffectContract(result.metadata, {
-              auditLogged: Boolean(callEvent),
+            metadata: sideEffectContract(metadataWithEffects, {
+              auditLogged: completionLogged,
               contextWritten,
               workflowProgressWritten,
             }),

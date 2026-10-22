@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { Cyber } from "./cyber"
 import {
+  hasEvidenceRef,
   isStructuredReplayExemption,
   type ReplayExemption,
   type ReplayExemptionCategory,
@@ -74,7 +75,10 @@ export namespace Oracle {
     session_id?: string
     message_id?: string
   }) {
-    const evidence_present = Array.isArray(input.evidence_refs) && input.evidence_refs.length > 0
+    // Blank strings are not evidence. Keeping this in step with
+    // `isReportableFinding` prevents the oracle and the report predicate from
+    // disagreeing about the same finding. (SEC-05)
+    const evidence_present = hasEvidenceRef(input.evidence_refs)
     const replay = replayVerdict({
       domain: input.domain,
       replay_present: input.replay_present,

@@ -51,16 +51,21 @@ function matches(pattern: string, req: Request): boolean {
     try {
       const u = new URL(req.value)
       if (pattern.includes("://")) return matchSchemePattern(pattern, u)
-      if (pattern.startsWith("*.")) return u.hostname.endsWith(pattern.slice(1))
-      if (pattern.includes("/")) return req.value.startsWith(pattern)
-      return u.hostname === pattern
+      // Hostnames are case-insensitive. The URL parser lowercases the request
+      // host, so the pattern must be normalized the same way or an operator
+      // entry such as "Example.COM" would silently never match. (SEC-01)
+      const host = u.hostname.toLowerCase()
+      if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1).toLowerCase())
+      if (pattern.includes("/")) return req.value.toLowerCase().startsWith(pattern.toLowerCase())
+      return host === pattern.toLowerCase()
     } catch {
       return false
     }
   }
   if (req.kind === "host") {
-    if (pattern.startsWith("*.")) return req.value.endsWith(pattern.slice(1))
-    return req.value === pattern
+    const host = req.value.toLowerCase()
+    if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1).toLowerCase())
+    return host === pattern.toLowerCase()
   }
   if (req.kind === "path" || req.kind === "raw") {
     if (pattern.includes("*") || pattern.includes("?")) return globToRegex(pattern).test(req.value)

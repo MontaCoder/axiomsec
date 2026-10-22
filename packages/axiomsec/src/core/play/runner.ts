@@ -45,11 +45,17 @@ export class PlayArgError extends Error {
 
 const TEMPLATE = /\{\{\s*([a-zA-Z0-9_.-]+)(?:\s*\|\s*([^}]*?))?\s*\}\}/g
 
+function scalar(value: unknown): string {
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return JSON.stringify(value) ?? ""
+}
+
 function substituteString(input: string, args: Record<string, unknown>): string {
   return input.replace(TEMPLATE, (_match, name: string, fallback?: string) => {
     const value = args[name]
     if (value === undefined || value === null || value === "") return fallback ?? ""
-    return String(value)
+    return scalar(value)
   })
 }
 
@@ -68,7 +74,7 @@ function evalCondition(expr: string, args: Record<string, unknown>): boolean {
   if (eq) {
     const lhs = args[eq[1]]
     const rhs = eq[2].trim().replace(/^["'](.*)["']$/, "$1")
-    return String(lhs ?? "") === rhs
+    return scalar(lhs ?? "") === rhs
   }
   const neg = trimmed.match(/^!\s*([a-zA-Z0-9_.-]+)$/)
   if (neg) {

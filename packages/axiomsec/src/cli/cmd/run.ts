@@ -556,8 +556,11 @@ export const RunCommand = cmd({
 
           if (event.type === "permission.asked") {
             const permission = event.properties
-            if (permission.sessionID !== sessionID) continue
-
+            // A `task` subagent runs in a child session. Filtering these by the
+            // parent session ID left child asks unanswered, so the run hung
+            // behind a prompt no consumer could see. The run owns the local
+            // server; in attach mode the operator explicitly connected it to
+            // this run's approval policy.
             if (args["dangerously-skip-permissions"]) {
               await sdk.permission.reply({
                 requestID: permission.id,
@@ -687,6 +690,11 @@ export const RunCommand = cmd({
       ])
       controller.abort()
       await loopPromise
+
+      // A session error (provider failure, rejected credentials, quota) is a
+      // failed run even when the transport itself closed cleanly. Headless
+      // consumers must see a non-zero exit code, not only an error event.
+      if (error) process.exitCode = 1
     }
 
     if (args.attach) {

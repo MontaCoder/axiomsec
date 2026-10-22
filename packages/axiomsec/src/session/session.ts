@@ -6,7 +6,6 @@ import { Decimal } from "decimal.js"
 import z from "zod"
 import { type ProviderMetadata, type LanguageModelUsage } from "ai"
 import { Flag } from "../flags/flag"
-import { Installation } from "../installer"
 import { InstallationVersion } from "../installer/version"
 
 import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt } from "../storage"
@@ -612,9 +611,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service> =
       const title = getForkedTitle(original.title)
       const inheritedOperationSlug = yield* findExistingOperationSlug(directory, original.operationSlug)
       const session = yield* createNext({
+        parentID: input.sessionID,
         directory,
         workspaceID: original.workspaceID,
         operationSlug: inheritedOperationSlug,
+        permission: original.permission,
         title,
       })
       const msgs = yield* messages({ sessionID: input.sessionID })

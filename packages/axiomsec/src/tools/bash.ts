@@ -7,6 +7,7 @@ import DESCRIPTION from "./bash.txt"
 import { Log } from "../support"
 import { Instance } from "../project/instance"
 import { lazy } from "@/support/lazy"
+import { withoutAuthEnv } from "@/support/auth-env"
 import { Language, type Node } from "web-tree-sitter"
 
 import { AppFileSystem } from "@axiomsec/shared/filesystem"
@@ -403,7 +404,7 @@ export const BashTool = Tool.define(
         { env: {} },
       )
       return {
-        ...process.env,
+        ...withoutAuthEnv(process.env),
         ...extra.env,
       }
     })

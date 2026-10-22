@@ -188,9 +188,15 @@ export function bucketFindings<T extends FindingShape>(records: T[]): FindingBuc
 
 export function isReportableFinding(input: FindingShape) {
   if (input.kind !== "finding" || input.status !== "verified") return false
-  if (!Array.isArray(input.evidence_refs) || input.evidence_refs.length === 0) return false
+  // An empty or whitespace ref is not an artifact. A blank array entry must
+  // not satisfy the evidence half of the proof gate. (SEC-05)
+  if (!hasEvidenceRef(input.evidence_refs)) return false
   if (input.replay_present) return true
   return isStructuredReplayExemption(normalizeReplayExemption(input))
+}
+
+export function hasEvidenceRef(refs: unknown): refs is string[] {
+  return Array.isArray(refs) && refs.some((ref) => typeof ref === "string" && ref.trim().length > 0)
 }
 
 export function isRejectedFinding(input: FindingShape) {

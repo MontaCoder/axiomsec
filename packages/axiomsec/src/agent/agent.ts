@@ -119,6 +119,13 @@ export namespace Agent {
             websearch: "ask",
             appsec_probe: "ask",
             interact: "ask",
+            // Adapter-backed triage can read local secrets, call cloud APIs, or
+            // pull container images. The catch-all allow rule must not make
+            // those subprocesses silent. (SEC-03 / RISK-PERM-10)
+            binary_triage: "ask",
+            iac_triage: "ask",
+            cloud_posture: "ask",
+            container_surface: "ask",
             vault: "ask",
             identity: "ask",
             share: "ask",
@@ -127,6 +134,9 @@ export namespace Agent {
             // what the report claims and what the boundary enforces.
             finding: "ask",
             observation: "ask",
+            // Autonomy rewrites the session ruleset to wildcard allow/ask. It
+            // must never be reachable through the catch-all allow rule.
+            autonomy: "ask",
             // MCP tools are third-party code: ask before running them.
             mcp: "ask",
             external_directory: {

@@ -64,6 +64,11 @@ export const TaskTool = Tool.define(
       const session = taskID
         ? yield* sessions.get(SessionID.make(taskID)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
+      // The parent session may carry operator/headless deny rules (the CLI run
+      // denies question and plan_exit, for example). A subagent must not be able
+      // to re-enable them through its own agent defaults.
+      const parent = yield* sessions.get(ctx.sessionID).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      const inheritedDenies = (parent?.permission ?? []).filter((rule) => rule.action === "deny")
       const nextSession =
         session ??
         (yield* sessions.create({
@@ -93,6 +98,7 @@ export const TaskTool = Tool.define(
               action: "allow" as const,
               permission: item,
             })) ?? []),
+            ...inheritedDenies,
           ],
         }))
 

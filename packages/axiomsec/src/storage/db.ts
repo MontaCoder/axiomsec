@@ -126,6 +126,19 @@ const ctx = LocalContext.create<{
   effects: (() => void | Promise<void>)[]
 }>("database")
 
+function flush(effects: (() => void | Promise<void>)[]) {
+  for (const effect of effects) {
+    const result = effect()
+    if (result instanceof Promise) {
+      result.catch((error) =>
+        log.error("post-transaction effect failed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    }
+  }
+}
+
 export function use<T>(callback: (trx: TxOrDb) => T): T {
   try {
     return callback(ctx.use().tx)
@@ -133,7 +146,7 @@ export function use<T>(callback: (trx: TxOrDb) => T): T {
     if (err instanceof LocalContext.NotFound) {
       const effects: (() => void | Promise<void>)[] = []
       const result = ctx.provide({ effects, tx: Client() }, () => callback(Client()))
-      for (const effect of effects) effect()
+      flush(effects)
       return result
     }
     throw err
@@ -164,7 +177,7 @@ export function transaction<T>(
       const effects: (() => void | Promise<void>)[] = []
       const txCallback = InstanceState.bind((tx: TxOrDb) => ctx.provide({ tx, effects }, () => callback(tx)))
       const result = Client().transaction(txCallback, { behavior: options?.behavior })
-      for (const effect of effects) effect()
+      flush(effects)
       return result as NotPromise<T>
     }
     throw err

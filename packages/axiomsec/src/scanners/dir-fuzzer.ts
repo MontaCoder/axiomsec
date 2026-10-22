@@ -4,9 +4,12 @@
  * Brute-force directory/file enumeration using a built-in wordlist.
  */
 
+import type { AllowUrl } from "./http"
+
 export interface DirFuzzResult {
   found: FoundPath[]
   testedCount: number
+  blockedCount: number
   elapsed: number
 }
 
@@ -100,16 +103,20 @@ export async function dirFuzz(
     concurrency?: number
     timeout?: number
     filterStatus?: number[]
+    /** Boundary callback. Every fuzzed path must pass before it is fetched. */
+    allowUrl?: AllowUrl
   } = {},
 ): Promise<DirFuzzResult> {
   const wordlist = options.wordlist ?? BUILTIN_WORDLIST
   const extensions = options.extensions ?? []
   const concurrency = options.concurrency ?? 10
   const timeout = options.timeout ?? 10_000
+  const allowUrl = options.allowUrl
   const start = Date.now()
   const base = baseUrl.replace(/\/+$/, "")
   const found: FoundPath[] = []
   let tested = 0
+  let blocked = 0
 
   // Build full path list including extensions
   const paths: string[] = [...wordlist]
@@ -119,8 +126,20 @@ export async function dirFuzz(
     }
   }
 
-  // Baseline: request a definitely-not-found path
-  const baseline = await probe(`${base}/axiomsec_404_check_${Date.now()}`, timeout)
+  // Baseline: request a definitely-not-found path. The baseline is still a
+  // subresource request, so it needs the same boundary decision as a word.
+  const baselineUrl = `${base}/axiomsec_404_check_${Date.now()}`
+  let baseline: Awaited<ReturnType<typeof probe>> = null
+  if (!allowUrl) {
+    baseline = await probe(baselineUrl, timeout)
+  } else {
+    try {
+      if (await allowUrl(baselineUrl)) baseline = await probe(baselineUrl, timeout)
+      else blocked++
+    } catch {
+      blocked++
+    }
+  }
   const baselineStatus = baseline?.status ?? 404
   const baselineLength = baseline?.length ?? 0
 
@@ -132,8 +151,20 @@ export async function dirFuzz(
 
     const results = await Promise.all(
       batch.map(async (path) => {
+        const target = `${base}/${path}`
+        if (allowUrl) {
+          try {
+            if (!(await allowUrl(target))) {
+              blocked++
+              return null
+            }
+          } catch {
+            blocked++
+            return null
+          }
+        }
         tested++
-        const resp = await probe(`${base}/${path}`, timeout)
+        const resp = await probe(target, timeout)
         if (!resp) return null
 
         // Skip if same as 404 baseline (custom 404 pages)
@@ -157,6 +188,7 @@ export async function dirFuzz(
   return {
     found: found.sort((a, b) => a.status - b.status),
     testedCount: tested,
+    blockedCount: blocked,
     elapsed: Date.now() - start,
   }
 }

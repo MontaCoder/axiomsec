@@ -20,9 +20,10 @@ const SECRET_ASSIGN_RE =
   /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|password|passwd|token|secret)\s*[=:]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s&,;"'\r\n]+)/gi
 // `Authorization=Bearer <token>` and `Cookie=session=<id>` are header values in
 // assignment form. They are redacted to the end of the line because the secret
-// itself can contain spaces. The guard keeps an already redacted line stable.
-// (RISK-SECRET-04)
-const AUTH_ASSIGN_RE = /((?:proxy-)?authorization|(?:set-)?cookie)(?![^\r\n]*\[redacted)(\s*[=:]\s*)[^\r\n]*/gi
+// itself can contain spaces. The guard only skips a value that is already a
+// redaction placeholder; it must not skip a live secret merely because another
+// redaction appears later on the same line. (RISK-SECRET-04)
+const AUTH_ASSIGN_RE = /((?:proxy-)?authorization|(?:set-)?cookie)(\s*[=:]\s*)(?!\s*\[redacted)[^\r\n]*/gi
 
 export type RedactMode = "off" | "on"
 

@@ -9,7 +9,6 @@ import { MessageID, PartID } from "../../../session/schema"
 import { ToolRegistry } from "../../../tools"
 import { Instance } from "../../../project/instance"
 import { Permission } from "../../../permissions"
-import { iife } from "../../../support/iife"
 import { bootstrap } from "../../bootstrap"
 import { cmd } from "../cmd"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -39,7 +38,7 @@ export const AgentCommand = cmd({
       }),
   async handler(args) {
     await bootstrap(process.cwd(), async () => {
-      const agentName = args.name as string
+      const agentName = args.name
       const agent = await AppRuntime.runPromise(Agent.Service.use((svc) => svc.get(agentName)))
       if (!agent) {
         process.stderr.write(
@@ -47,20 +46,22 @@ export const AgentCommand = cmd({
         )
         process.exit(1)
       }
-      const availableTools = await getAvailableTools(agent)
+      const availableTools = (await getAvailableTools(agent)).filter(
+        (tool) => !agent.toolset_exclude?.includes(tool.id),
+      )
       const resolvedTools = await resolveTools(agent, availableTools)
-      const toolID = args.tool as string | undefined
+      const toolID = args.tool
       if (toolID) {
         const tool = availableTools.find((item) => item.id === toolID)
         if (!tool) {
           process.stderr.write(`Tool ${toolID} not found for agent ${agentName}` + EOL)
           process.exit(1)
         }
-        if (resolvedTools[toolID] === false) {
+        if (!resolvedTools[toolID]) {
           process.stderr.write(`Tool ${toolID} is disabled for agent ${agentName}` + EOL)
           process.exit(1)
         }
-        const params = parseToolParams(args.params as string | undefined)
+        const params = parseToolParams(args.params)
         const ctx = await createToolContext(agent, Boolean(args["dangerously-skip-permissions"]))
         const result = await AppRuntime.runPromise(tool.execute(params, ctx))
         process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)
@@ -107,20 +108,14 @@ function parseToolParams(input?: string) {
   const trimmed = input.trim()
   if (trimmed.length === 0) return {}
 
-  const parsed = iife(() => {
-    try {
-      return JSON.parse(trimmed)
-    } catch (jsonError) {
-      try {
-        return new Function(`return (${trimmed})`)()
-      } catch (evalError) {
-        throw new Error(
-          `Failed to parse --params. Use JSON or a JS object literal. JSON error: ${jsonError}. Eval error: ${evalError}.`,
-          { cause: evalError },
-        )
-      }
-    }
-  })
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch (error) {
+    throw new Error(`Failed to parse --params as JSON: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
+  }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Tool params must be an object.")

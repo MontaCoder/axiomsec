@@ -121,8 +121,8 @@ async function seedStorage(page: any, params: Params) {
   await page
     .addInitScript(
       (value: { local: Record<string, string>; session: Record<string, string> }) => {
-        for (const k of Object.keys(value.local)) window.localStorage.setItem(k, value.local[k]!)
-        for (const k of Object.keys(value.session)) window.sessionStorage.setItem(k, value.session[k]!)
+        for (const k of Object.keys(value.local)) window.localStorage.setItem(k, value.local[k])
+        for (const k of Object.keys(value.session)) window.sessionStorage.setItem(k, value.session[k])
       },
       { local, session },
     )
@@ -132,8 +132,8 @@ async function seedStorage(page: any, params: Params) {
   await page
     .evaluate(
       (value: { local: Record<string, string>; session: Record<string, string> }) => {
-        for (const k of Object.keys(value.local)) window.localStorage.setItem(k, value.local[k]!)
-        for (const k of Object.keys(value.session)) window.sessionStorage.setItem(k, value.session[k]!)
+        for (const k of Object.keys(value.local)) window.localStorage.setItem(k, value.local[k])
+        for (const k of Object.keys(value.session)) window.sessionStorage.setItem(k, value.session[k])
       },
       { local, session },
     )
@@ -222,7 +222,7 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
     if (!browser!) {
       const pathNote = envPath ? ` | tried AXIOMSEC_CHROMIUM_PATH=${envPath}` : ""
       throw new Error(
-        `Chromium browser not found. Run: npx playwright install chromium — ${firstError}${pathNote}`,
+        `Chromium browser not found. Run: npx playwright install chromium — ${firstError}${pathNote}`, { cause: err },
       )
     }
   }
@@ -230,6 +230,22 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
     ignoreHTTPSErrors: ignoreHttpsErrors,
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+  })
+  // HTTP routes and WebSockets are guarded, but WebRTC and WebTransport use
+  // UDP/QUIC directly and bypass Playwright routing. Deny those constructors
+  // in every frame so a page cannot contact an out-of-boundary host.
+  await context.addInitScript(() => {
+    for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "WebTransport"]) {
+      try {
+        Object.defineProperty(globalThis, name, {
+          configurable: false,
+          writable: false,
+          value: function () {
+            throw new DOMException("blocked by the operation boundary", "NotAllowedError")
+          },
+        })
+      } catch {}
+    }
   })
   const page = await context.newPage()
   const entry: Session = { browser, context, page, console: [], network: [] }
@@ -283,7 +299,7 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
   context.on("request", (req: any) => {
     const id = `${Date.now()}-${req.url()}`
     pending.set(req, { ts: Date.now(), method: req.method(), url: req.url() })
-    ;(req as any).__id = id
+    ;(req).__id = id
   })
   context.on("response", async (resp: any) => {
     const req = resp.request()
@@ -298,7 +314,7 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
       status: resp.status(),
       content_type: headers["content-type"],
       duration_ms: Date.now() - ts,
-      req_id: (req as any).__id ?? "",
+      req_id: (req).__id ?? "",
     })
     if (entry.network.length > MAX_BUFFER) entry.network.shift()
   })
@@ -319,7 +335,7 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
 
 async function hydrate(context: any, page: any, params: Params) {
   const identity = await activeIdentity().catch(() => undefined)
-  const headers = { ...(identity?.headers ?? {}), ...(params.headers ?? {}) }
+  const headers = { ...identity?.headers, ...params.headers }
   if (Object.keys(headers).length > 0) {
     await context.setExtraHTTPHeaders(headers)
   }
@@ -838,8 +854,8 @@ async function run(
     const summary = await page
       .evaluate(() => {
         const forms = Array.from(document.querySelectorAll("form")).map((f) => ({
-          action: (f as HTMLFormElement).action,
-          method: (f as HTMLFormElement).method,
+          action: (f).action,
+          method: (f).method,
           inputs: Array.from(f.querySelectorAll("input,textarea,select")).map((i) => ({
             name: (i as HTMLInputElement).name,
             type: (i as HTMLInputElement).type,

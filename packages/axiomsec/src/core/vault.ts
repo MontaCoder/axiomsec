@@ -45,8 +45,15 @@ export async function loadVault(): Promise<VaultState> {
 export async function saveVault(vault: VaultState) {
   await fs.mkdir(configDir(), { recursive: true, mode: 0o700 })
   const file = vaultPath()
-  await fs.writeFile(file, JSON.stringify(vault, null, 2), { mode: 0o600 })
-  await fs.chmod(file, 0o600)
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
+  try {
+    await fs.writeFile(temp, JSON.stringify(vault, null, 2), { mode: 0o600 })
+    await fs.chmod(temp, 0o600)
+    await fs.rename(temp, file)
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 function cookieLike(value: string) {

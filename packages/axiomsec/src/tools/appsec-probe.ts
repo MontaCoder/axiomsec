@@ -210,6 +210,7 @@ async function request(input: {
   body?: string
   timeout: number
   abort: AbortSignal
+  allowUrl?: (url: string) => Promise<boolean> | boolean
 }): Promise<ProbeResult> {
   const url = routeUrl(input.origin, input.path)
   const method = input.method ?? "GET"
@@ -217,10 +218,37 @@ async function request(input: {
     Accept: "application/json,text/html,*/*",
     "User-Agent": "axiomsec-appsec-probe/1.2",
     ...(input.body ? { "Content-Type": "application/json" } : {}),
-    ...(input.headers ?? {}),
+    ...input.headers,
   }
   const curl = replay({ method, url, headers, body: input.body })
   const started = Date.now()
+  // Every synthetic route is a new request. The initial origin check does not
+  // authorise a different path when the operation boundary is path-scoped.
+  if (input.allowUrl) {
+    try {
+      if (!(await input.allowUrl(url))) {
+        return {
+          check: input.check,
+          label: input.label,
+          method,
+          url,
+          headers: {},
+          replay: curl,
+          error: "path outside operation boundary",
+        }
+      }
+    } catch {
+      return {
+        check: input.check,
+        label: input.label,
+        method,
+        url,
+        headers: {},
+        replay: curl,
+        error: "path outside operation boundary",
+      }
+    }
+  }
   try {
     const signal = AbortSignal.any([input.abort, AbortSignal.timeout(input.timeout)])
     const response = await _deps.fetch(url, {
@@ -559,7 +587,13 @@ function analyze(origin: string, results: ProbeResult[]): Candidate[] {
   return candidates
 }
 
-function routesFor(origin: string, plan: ProbePlanItem[], timeout: number, abort: AbortSignal) {
+function routesFor(
+  origin: string,
+  plan: ProbePlanItem[],
+  timeout: number,
+  abort: AbortSignal,
+  allowUrl?: (url: string) => Promise<boolean> | boolean,
+) {
   return plan.map((item) =>
     request({
       origin,
@@ -571,6 +605,7 @@ function routesFor(origin: string, plan: ProbePlanItem[], timeout: number, abort
       body: item.body,
       timeout,
       abort,
+      allowUrl,
     }),
   )
 }
@@ -669,7 +704,16 @@ export const AppsecProbeTool = Tool.define<typeof parameters, Metadata, never>(
           const probePlanDraft = buildProbePlan(origin, surface.routes, surface.forms)
           const probePlan = probePlanDraft.plan.filter((item) => checks.includes(item.check))
           const skipped = probePlanDraft.skipped
-          const results = yield* Effect.promise(() => Promise.all(routesFor(origin, probePlan, timeout, ctx.abort)))
+          const allowUrl = async (url: string) => {
+            try {
+              return (await Guard.checkUrl(workspace, url, slug)).mode === "allow"
+            } catch {
+              return false
+            }
+          }
+          const results = yield* Effect.promise(() =>
+            Promise.all(routesFor(origin, probePlan, timeout, ctx.abort, allowUrl)),
+          )
           const candidates = analyze(origin, results)
           const evidence =
             !slug
