@@ -8,8 +8,6 @@
         "@axiomsec/plugin": "workspace:*",
         "@axiomsec/script": "workspace:*",
         "@axiomsec/sdk": "workspace:*",
-        "@opentui/core": "0.1.99",
-        "@parcel/watcher": "2.5.1",
         "typescript": "catalog:",
       },
       "devDependencies": {
