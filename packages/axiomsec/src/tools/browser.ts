@@ -251,6 +251,21 @@ async function ensure(abort: AbortSignal, key: string, ignoreHttpsErrors: boolea
     return route.abort("blockedbyclient")
   })
 
+  // HTTP routes do not intercept WebSocket handshakes; deny out-of-boundary
+  // sockets separately so a page cannot exfiltrate over ws(s).
+  await context.routeWebSocket(
+    () => true,
+    async (socket: any) => {
+      const boundary = entry.boundary
+      if (!boundary) return socket.close({ code: 1008, reason: "no active operation boundary" })
+      const allowed = await Guard.checkUrl(boundary.workspace, socket.url(), boundary.slug)
+        .then((decision) => decision.mode === "allow")
+        .catch(() => false)
+      if (allowed) return socket.connectToServer()
+      return socket.close({ code: 1008, reason: "out of scope" })
+    },
+  )
+
   const MAX_BUFFER = 500
   page.on("console", (msg: any) => {
     entry.console.push({

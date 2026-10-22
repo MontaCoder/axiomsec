@@ -5,6 +5,8 @@
  * robots.txt, and OpenAPI specs.
  */
 
+import { fetchGuarded, type AllowUrl } from "./http"
+
 export interface CrawlResult {
   urls: string[]
   forms: FormInfo[]
@@ -100,10 +102,10 @@ function detectTechnologies(headers: Headers, body: string): string[] {
   return [...techs]
 }
 
-async function fetchRobots(base: string): Promise<string[]> {
+async function fetchRobots(base: string, allow?: AllowUrl): Promise<string[]> {
   try {
-    const resp = await fetch(`${base}/robots.txt`, { signal: AbortSignal.timeout(5000) })
-    if (!resp.ok) return []
+    const resp = await fetchGuarded(`${base}/robots.txt`, { signal: AbortSignal.timeout(5000) }, allow)
+    if (!resp?.ok) return []
     const text = await resp.text()
     const disallowed: string[] = []
     for (const line of text.split("\n")) {
@@ -116,10 +118,10 @@ async function fetchRobots(base: string): Promise<string[]> {
   }
 }
 
-async function fetchSitemap(base: string): Promise<string[]> {
+async function fetchSitemap(base: string, allow?: AllowUrl): Promise<string[]> {
   try {
-    const resp = await fetch(`${base}/sitemap.xml`, { signal: AbortSignal.timeout(5000) })
-    if (!resp.ok) return []
+    const resp = await fetchGuarded(`${base}/sitemap.xml`, { signal: AbortSignal.timeout(5000) }, allow)
+    if (!resp?.ok) return []
     const text = await resp.text()
     const urls: string[] = []
     const re = /<loc>([^<]+)<\/loc>/gi
@@ -131,12 +133,12 @@ async function fetchSitemap(base: string): Promise<string[]> {
   }
 }
 
-async function detectOpenAPI(base: string): Promise<string | undefined> {
+async function detectOpenAPI(base: string, allow?: AllowUrl): Promise<string | undefined> {
   const paths = ["/openapi.json", "/swagger.json", "/api-docs", "/v2/api-docs", "/v3/api-docs"]
   for (const p of paths) {
     try {
-      const resp = await fetch(`${base}${p}`, { signal: AbortSignal.timeout(5000) })
-      if (!resp.ok) continue
+      const resp = await fetchGuarded(`${base}${p}`, { signal: AbortSignal.timeout(5000) }, allow)
+      if (!resp?.ok) continue
       const text = await resp.text()
       if (text.includes('"openapi"') || text.includes('"swagger"')) return `${base}${p}`
     } catch {
@@ -146,9 +148,14 @@ async function detectOpenAPI(base: string): Promise<string | undefined> {
   return undefined
 }
 
-async function fetchPage(url: string, timeout: number): Promise<{ status: number; headers: Headers; body: string } | null> {
+async function fetchPage(
+  url: string,
+  timeout: number,
+  allow?: AllowUrl,
+): Promise<{ status: number; headers: Headers; body: string } | null> {
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(timeout) })
+    const resp = await fetchGuarded(url, { signal: AbortSignal.timeout(timeout) }, allow)
+    if (!resp) return null
     return { status: resp.status, headers: resp.headers, body: await resp.text() }
   } catch {
     return null
@@ -160,11 +167,12 @@ async function fetchPage(url: string, timeout: number): Promise<{ status: number
  */
 export async function crawl(
   startUrl: string,
-  options: { maxUrls?: number; maxDepth?: number; timeout?: number } = {},
+  options: { maxUrls?: number; maxDepth?: number; timeout?: number; allowUrl?: AllowUrl } = {},
 ): Promise<CrawlResult> {
   const maxUrls = options.maxUrls ?? 100
   const maxDepth = options.maxDepth ?? 3
   const timeout = options.timeout ?? 10_000
+  const allowUrl = options.allowUrl
   const start = Date.now()
   const visited = new Set<string>()
   const allForms: FormInfo[] = []
@@ -173,21 +181,35 @@ export async function crawl(
   const base = new URL(startUrl).origin
 
   const [robotsDisallowed, sitemap, openapi] = await Promise.all([
-    fetchRobots(base),
-    fetchSitemap(base),
-    detectOpenAPI(base),
+    fetchRobots(base, allowUrl),
+    fetchSitemap(base, allowUrl),
+    detectOpenAPI(base, allowUrl),
   ])
 
   for (const url of sitemap.slice(0, 20)) {
+    if (allowUrl) {
+      try {
+        if (!(await allowUrl(url))) continue
+      } catch {
+        continue
+      }
+    }
     queue.push({ url, depth: 1 })
   }
 
   while (queue.length > 0 && visited.size < maxUrls) {
     const item = queue.shift()!
     if (visited.has(item.url) || item.depth > maxDepth) continue
+    if (allowUrl) {
+      try {
+        if (!(await allowUrl(item.url))) continue
+      } catch {
+        continue
+      }
+    }
     visited.add(item.url)
 
-    const resp = await fetchPage(item.url, timeout)
+    const resp = await fetchPage(item.url, timeout, allowUrl)
     if (!resp || resp.status >= 400) continue
 
     const techs = detectTechnologies(resp.headers, resp.body)

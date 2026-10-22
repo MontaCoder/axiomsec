@@ -1,6 +1,8 @@
 import { Effect } from "effect"
+import path from "path"
 import z from "zod"
 import * as Tool from "./tool"
+import { assertExternalDirectoryEffect } from "./external-directory"
 import { Evidence } from "@/core/evidence"
 import { Cyber } from "@/core/cyber"
 import * as OperationSnapshot from "@/core/operation/snapshot"
@@ -242,8 +244,16 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
               metadata: { action: "add_file", slug, side_effects: Tool.sideEffects("writes_evidence") },
             }
           }
+          const filepath = path.resolve(Instance.directory, params.path)
+          yield* assertExternalDirectoryEffect(ctx, filepath)
+          yield* ctx.ask({
+            permission: "read",
+            patterns: [filepath],
+            always: ["*"],
+            metadata: { action: "add_file" },
+          })
           const entry = yield* Effect.promise(() =>
-            Evidence.put(workspace, slug, { path: params.path! }, { mime: params.mime, label: params.label, source: params.path }),
+            Evidence.put(workspace, slug, { path: filepath }, { mime: params.mime, label: params.label, source: params.path }),
           )
           yield* Cyber.appendLedger({
             operation_slug: slug,

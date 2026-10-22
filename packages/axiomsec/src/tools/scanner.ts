@@ -565,7 +565,7 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
       execute: (params: Params, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
           const urlMode = isUrlMode(params.mode)
-          if (urlMode) baseUrl(params.target)
+          const base = urlMode ? baseUrl(params.target) : undefined
 
           const host = extractHost(params.target)
           const scopeReq = urlMode
@@ -599,6 +599,28 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
             },
           })
 
+          const baseTarget = base ? new URL(base) : undefined
+          // Crawl and JS analysis fetch resources discovered from the target.
+          // Only explicitly in-scope URLs, plus the approved target's origin
+          // and path subtree, may be fetched.
+          const allowUrl = async (url: string) => {
+            try {
+              const decision = await Guard.checkUrl(workspace, url, slug)
+              if (decision.mode === "allow") return true
+              if (decision.mode === "ask" && baseTarget) {
+                const candidate = new URL(url)
+                if (candidate.origin !== baseTarget.origin) return false
+                const basePath = baseTarget.pathname || "/"
+                if (basePath === "/") return true
+                const prefix = basePath.endsWith("/") ? basePath : basePath + "/"
+                return candidate.pathname === basePath || candidate.pathname.startsWith(prefix)
+              }
+              return false
+            } catch {
+              return false
+            }
+          }
+
           const signal = AbortSignal.any([ctx.abort, AbortSignal.timeout(TIMEOUTS[params.mode])])
           const opts = params.options ?? {}
 
@@ -608,6 +630,7 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
                 maxUrls: opts.maxUrls,
                 maxDepth: opts.maxDepth,
                 timeout: opts.timeout,
+                allowUrl,
               })
             }
             if (params.mode === "dir-fuzz") {
@@ -623,6 +646,7 @@ export const ScannerTool = Tool.define<typeof parameters, Metadata, never>(
               return analyzeJs(baseUrl(params.target), {
                 maxFiles: opts.maxFiles,
                 timeout: opts.timeout,
+                allowUrl,
               })
             }
             if (params.mode === "ports") {

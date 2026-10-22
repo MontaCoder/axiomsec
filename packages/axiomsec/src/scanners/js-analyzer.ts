@@ -5,6 +5,8 @@
  * sensitive routes, SPA routes, and chatbot indicators.
  */
 
+import { fetchGuarded, type AllowUrl } from "./http"
+
 export interface JsAnalysisResult {
   endpoints: string[]
   secrets: SecretMatch[]
@@ -132,13 +134,15 @@ function findChatbotIndicators(text: string): string[] {
  */
 export async function analyzeJs(
   url: string,
-  options: { maxFiles?: number; timeout?: number } = {},
+  options: { maxFiles?: number; timeout?: number; allowUrl?: AllowUrl } = {},
 ): Promise<JsAnalysisResult> {
   const maxFiles = options.maxFiles ?? 20
   const timeout = options.timeout ?? 10_000
+  const allowUrl = options.allowUrl
   const start = Date.now()
 
-  const page = await fetch(url, { signal: AbortSignal.timeout(timeout) })
+  const page = await fetchGuarded(url, { signal: AbortSignal.timeout(timeout) }, allowUrl)
+  if (!page) throw new Error(`js: ${url} is not allowed by the active operation boundary`)
   const body = await page.text()
   const jsFiles = extractJsFiles(body, url).slice(0, maxFiles)
   const allEndpoints = new Set<string>()
@@ -156,8 +160,8 @@ export async function analyzeJs(
   const results = await Promise.all(
     jsFiles.map(async (file) => {
       try {
-        const resp = await fetch(file, { signal: AbortSignal.timeout(timeout) })
-        if (!resp.ok) return null
+        const resp = await fetchGuarded(file, { signal: AbortSignal.timeout(timeout) }, allowUrl)
+        if (!resp?.ok) return null
         return { file, body: await resp.text() }
       } catch {
         return null

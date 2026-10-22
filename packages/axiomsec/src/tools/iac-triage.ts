@@ -4,6 +4,7 @@ import z from "zod"
 import { Effect } from "effect"
 import { InstanceState } from "@/effect"
 import * as Tool from "./tool"
+import { assertExternalDirectoryEffect } from "./external-directory"
 import DESCRIPTION from "./iac-triage.txt"
 import { runProcess } from "./process"
 import { Cyber } from "@/core/cyber"
@@ -96,6 +97,16 @@ export const IacTriageTool = Tool.define<typeof parameters, Metadata, never>(
           }
 
           const ins = yield* InstanceState.context
+          const absolutePath = resolve(ins.directory, params.path)
+          yield* assertExternalDirectoryEffect(ctx, absolutePath, {
+            kind: _deps.isDirectory(absolutePath) ? "directory" : "file",
+          })
+          yield* ctx.ask({
+            permission: "read",
+            patterns: [absolutePath],
+            always: ["*"],
+            metadata: { action: "iac_triage" },
+          })
           const command = buildCommand(params, ins.directory)
           yield* ctx.ask({
             permission: "iac_triage",

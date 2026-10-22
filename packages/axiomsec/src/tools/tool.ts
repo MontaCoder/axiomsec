@@ -249,7 +249,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               ).pipe(Effect.catch(() => Effect.succeed({ source: "none" as const })))
             : { source: "none" as const }
           const toolCtx = { ...ctx, operation }
-          yield* Effect.try({
+          const validatedArgs = yield* Effect.try({
             try: () => toolInfo.parameters.parse(args),
             catch: (error) => {
               if (error instanceof z.ZodError && toolInfo.formatValidationError) {
@@ -271,11 +271,11 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               data: {
                 tool: id,
                 call_id: ctx.callID,
-                input: redactToolInput(id, args),
+                input: redactToolInput(id, validatedArgs),
               },
             })
             .pipe(Effect.catch(() => Effect.succeed("")))
-          const exit = yield* Effect.exit(execute(args, toolCtx))
+          const exit = yield* Effect.exit(execute(validatedArgs, toolCtx))
           if (Exit.isFailure(exit)) {
             yield* Cyber.appendLedger({
                 operation_slug: operation.slug,
@@ -301,7 +301,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                     tool: id,
                     success: false,
                     error: "tool execution failed",
-                    args: redactToolInput(id, args),
+                    args: redactToolInput(id, validatedArgs),
                   }).catch(() => undefined),
                 ).pipe(Effect.catch(() => Effect.succeed(undefined)))
                 if (match) {
@@ -384,7 +384,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                   tool: id,
                   success: true,
                   title: result.title,
-                  args: redactToolInput(id, args),
+                  args: redactToolInput(id, validatedArgs),
                 }).catch(() => undefined),
               ).pipe(Effect.catch(() => Effect.succeed(undefined)))
               if (match) {

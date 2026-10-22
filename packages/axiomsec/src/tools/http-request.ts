@@ -2,6 +2,7 @@ import z from "zod"
 import { Effect } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import * as Tool from "./tool"
+import * as GuardedHttp from "./guarded-http"
 import DESCRIPTION from "./http-request.txt"
 import { Guard, ScopeDeniedError } from "@/core/boundary"
 import { Cyber } from "@/core/cyber"
@@ -37,8 +38,9 @@ function replay(input: {
   headers?: Record<string, string>
   body?: string
   cookies?: string
+  followRedirects?: boolean
 }) {
-  const parts: string[] = [`curl -i -X ${input.method}`]
+  const parts: string[] = [`curl -i${input.followRedirects ? " -L" : ""} -X ${input.method}`]
   parts.push(`'${shell(input.url)}'`)
   const headers = input.headers ?? {}
   const names = Object.keys(headers).sort((a, b) => a.localeCompare(b))
@@ -106,18 +108,23 @@ export const HttpRequestTool = Tool.define(
           )
 
           const start = Date.now()
+          const followRedirects = params.follow_redirects ?? true
 
-          const response = yield* http.execute(request).pipe(
-            Effect.timeoutOrElse({
-              duration: timeout,
-              orElse: () => Effect.die(new Error(`Request timed out after ${timeout}ms`)),
-            }),
-          )
+          const response = yield* GuardedHttp.execute({
+            client: http,
+            request,
+            workspace,
+            slug,
+            ctx,
+            followRedirects,
+            timeoutMs: timeout,
+          })
           const elapsed = Date.now() - start
 
           const body = yield* response.text
           const status = response.status
           const headers = response.headers
+          const finalUrl = response.request.url
 
           const headerLines = Object.entries(headers)
             .map(([k, v]) => `${k}: ${v}`)
@@ -134,11 +141,13 @@ export const HttpRequestTool = Tool.define(
             headers: params.headers,
             body: params.body,
             cookies: params.cookies,
+            followRedirects,
           })
 
           const output = [
             `HTTP ${status}`,
             `URL: ${params.url}`,
+            finalUrl !== params.url ? `Final URL: ${finalUrl}` : undefined,
             `Elapsed: ${elapsed}ms`,
             "",
             "── Response Headers ──",
@@ -153,7 +162,7 @@ export const HttpRequestTool = Tool.define(
             .filter(Boolean)
             .join("\n")
 
-          const target = new URL(params.url)
+          const target = new URL(finalUrl || params.url)
           const hostKey = target.hostname
           const port = target.port || (target.protocol === "https:" ? "443" : "80")
           const serviceKey = `${hostKey}:${port}`
@@ -171,6 +180,7 @@ export const HttpRequestTool = Tool.define(
                       {
                         request: {
                           url: params.url,
+                          final_url: finalUrl,
                           method: params.method,
                           headers: merged,
                           cookies: merged["Cookie"],
@@ -212,6 +222,8 @@ export const HttpRequestTool = Tool.define(
               host: hostKey,
               service: serviceKey,
               route: routeKey,
+              url: params.url,
+              final_url: finalUrl,
               method: params.method,
               status,
               elapsed_ms: elapsed,

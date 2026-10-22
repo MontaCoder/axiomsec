@@ -10,12 +10,47 @@ function globToRegex(glob: string): RegExp {
   return new RegExp("^" + esc + "$", "i")
 }
 
+function effectivePort(url: URL): string {
+  if (url.port) return url.port
+  switch (url.protocol) {
+    case "https:":
+    case "wss:":
+      return "443"
+    case "http:":
+    case "ws:":
+      return "80"
+    default:
+      return ""
+  }
+}
+
+function matchSchemePattern(pattern: string, u: URL): boolean {
+  let p: URL
+  try {
+    p = new URL(pattern)
+  } catch {
+    return false
+  }
+  if (u.protocol !== p.protocol) return false
+  if (p.hostname.startsWith("*.")) {
+    if (!u.hostname.endsWith(p.hostname.slice(1))) return false
+  } else if (u.hostname !== p.hostname) {
+    return false
+  }
+  if (effectivePort(u) !== effectivePort(p)) return false
+  const path = p.pathname || "/"
+  if (path === "/") return true
+  const target = u.pathname || "/"
+  if (path.includes("*") || path.includes("?")) return globToRegex(path).test(target)
+  return target === path || target.startsWith(path.endsWith("/") ? path : path + "/")
+}
+
 function matches(pattern: string, req: Request): boolean {
   if (!pattern) return false
   if (req.kind === "url") {
     try {
       const u = new URL(req.value)
-      if (pattern.includes("://")) return u.origin === pattern || req.value.startsWith(pattern)
+      if (pattern.includes("://")) return matchSchemePattern(pattern, u)
       if (pattern.startsWith("*.")) return u.hostname.endsWith(pattern.slice(1))
       if (pattern.includes("/")) return req.value.startsWith(pattern)
       return u.hostname === pattern

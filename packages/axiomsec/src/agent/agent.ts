@@ -118,10 +118,17 @@ export namespace Agent {
             webfetch: "ask",
             websearch: "ask",
             appsec_probe: "ask",
+            interact: "ask",
             vault: "ask",
             identity: "ask",
             share: "ask",
             scope: "ask",
+            // Writing the operation record is a security decision: it changes
+            // what the report claims and what the boundary enforces.
+            finding: "ask",
+            observation: "ask",
+            // MCP tools are third-party code: ask before running them.
+            mcp: "ask",
             external_directory: {
               "*": "ask",
               ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),

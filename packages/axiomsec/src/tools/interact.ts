@@ -87,8 +87,14 @@ export const InteractTool = Tool.define<typeof parameters, Metadata, never>(
     return {
       description: DESCRIPTION,
       parameters,
-      execute: (params: Params, _ctx: Tool.Context<Metadata>) =>
+      execute: (params: Params, ctx: Tool.Context<Metadata>) =>
         Effect.gen(function* () {
+          yield* ctx.ask({
+            permission: "interact",
+            patterns: [params.op],
+            always: [],
+            metadata: { op: params.op, id: params.id },
+          })
           const store = yield* Effect.promise(() => load())
           if (params.op === "generate") {
             const id = newId()

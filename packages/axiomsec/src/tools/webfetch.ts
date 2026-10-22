@@ -1,7 +1,8 @@
 import z from "zod"
 import { Effect } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import * as Tool from "./tool"
+import * as GuardedHttp from "./guarded-http"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { Guard, ScopeDeniedError } from "@/core/boundary"
@@ -26,7 +27,6 @@ export const WebFetchTool = Tool.define(
   "webfetch",
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
-    const httpOk = HttpClient.filterStatusOk(http)
 
     return {
       description: DESCRIPTION,
@@ -88,24 +88,30 @@ export const WebFetchTool = Tool.define(
             "Accept-Language": "en-US,en;q=0.9",
           }
 
-          const request = HttpClientRequest.get(params.url).pipe(HttpClientRequest.setHeaders(headers))
+          const request = (userAgent: string) =>
+            HttpClientRequest.get(params.url).pipe(
+              HttpClientRequest.setHeaders({ ...headers, "User-Agent": userAgent }),
+            )
+          const deadline = Date.now() + timeout
+          const fetch = (current: HttpClientRequest.HttpClientRequest) =>
+            GuardedHttp.execute({
+              client: http,
+              request: current,
+              workspace,
+              slug,
+              ctx,
+              followRedirects: true,
+              timeoutMs: Math.max(1, deadline - Date.now()),
+            })
 
           // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
-          const response = yield* httpOk.execute(request).pipe(
-            Effect.catchIf(
-              (err) =>
-                err.reason._tag === "StatusCodeError" &&
-                err.reason.response.status === 403 &&
-                err.reason.response.headers["cf-mitigated"] === "challenge",
-              () =>
-                httpOk.execute(
-                  HttpClientRequest.get(params.url).pipe(
-                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "axiomsec" }),
-                  ),
-                ),
-            ),
-            Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.die(new Error("Request timed out")) }),
-          )
+          const response = yield* Effect.gen(function* () {
+            let response = yield* fetch(request(headers["User-Agent"]))
+            if (response.status === 403 && response.headers["cf-mitigated"] === "challenge") {
+              response = yield* fetch(request("axiomsec"))
+            }
+            return yield* HttpClientResponse.filterStatusOk(response)
+          })
 
           // Check content length
           const contentLength = response.headers["content-length"]
@@ -120,8 +126,9 @@ export const WebFetchTool = Tool.define(
 
           const contentType = response.headers["content-type"] || ""
           const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
+          const finalUrl = response.request.url || params.url
           const title = `${params.url} (${contentType})`
-          const hostKey = new URL(params.url).hostname
+          const hostKey = new URL(finalUrl).hostname
 
           // Check if response is an image
           const isImage = mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
@@ -147,6 +154,7 @@ export const WebFetchTool = Tool.define(
             evidence_refs: evidenceRefs,
             data: {
               url: params.url,
+              final_url: finalUrl,
               host: hostKey,
               format: params.format,
               content_type: mime || null,
@@ -163,6 +171,7 @@ export const WebFetchTool = Tool.define(
               fact_name: "fetch_result",
               value_json: {
                 url: params.url,
+                final_url: finalUrl,
                 host: hostKey,
                 format: params.format,
                 content_type: mime || null,
@@ -218,6 +227,7 @@ export const WebFetchTool = Tool.define(
             fact_name: "fetch_result",
             value_json: {
               url: params.url,
+              final_url: finalUrl,
               host: hostKey,
               format: params.format,
               content_type: mime || null,
