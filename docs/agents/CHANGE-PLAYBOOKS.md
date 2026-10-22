@@ -133,4 +133,35 @@ Schema migrations apply lazily when the DB opens (`packages/axiomsec/src/storage
 - Consider secret exposure in tool args, ledger events, evidence, shares, reports, and logs.
 - Update `AGENTS.md` only when a cross-cutting rule changes; keep it ≤150 lines.
 
+## I. Cut a release
+
+The release is driven by a **tag**, not by a branch push. `.github/workflows/release.yml` triggers on `push: tags: "v*"`.
+
+1. Bump the version in **all four** workspace packages — `packages/axiomsec`, `packages/plugin`, `packages/sdk`, `packages/shared` — and in the `README.md` version line. They ship in lockstep.
+2. Move the `CHANGELOG.md` `Unreleased` section under a `## [X.Y.Z] — <date>` heading and update the comparison links at the bottom (`[Unreleased]: .../compare/vX.Y.Z...HEAD` and `[X.Y.Z]: .../releases/tag/vX.Y.Z`).
+3. Regenerate the lockfile with the **pinned** Bun (`packageManager` in the root `package.json`), not a newer local Bun, so the lockfile matches CI.
+4. Run the gate: `bun typecheck`, `bun run lint`, `bun test`, and the single-platform build.
+5. Commit the release, then create the **annotated** tag and push it:
+
+   ```bash
+   git tag -a vX.Y.Z -m "axiomsec vX.Y.Z"
+   git push origin main
+   git push origin vX.Y.Z
+   ```
+
+   The tag message and the `vX.Y.Z` shape are what the previous releases use; `script/version.ts` validates the version and derives the tag.
+6. The `Release` workflow then resolves the version, validates, builds for every platform, and publishes the GitHub release with the per-platform archives.
+
+**Repository secrets the publish jobs need** (they are not optional — the jobs fail without them):
+
+| Secret | Used by | Failure without it |
+|---|---|---|
+| `NPM_TOKEN` | `Publish to npm` | `npm publish` cannot authenticate; the `axiomsec` package is never published |
+| `DOCKERHUB_USERNAME` | `Publish Docker Image` | `docker/login-action` cannot log in |
+| `DOCKERHUB_TOKEN` | `Publish Docker Image` | same |
+
+Both jobs now check for their secret first and fail with a message that names it, instead of a bare registry error.
+
+**Note:** the GitHub release and the npm/Docker publishes are separate jobs. A red `Publish to npm` does not remove the GitHub release — the release page and its assets are still created and usable.
+
 Next: [VERIFICATION.md](VERIFICATION.md) for proof, [INVARIANTS.md](INVARIANTS.md) for the rules, [ARCHITECTURE.md](ARCHITECTURE.md) for the map.

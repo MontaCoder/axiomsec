@@ -560,7 +560,18 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Fix direction:** Add real tests and remove the lite-repo caveat when the test harness exists.
 **Related:** `RISK-CI-01`, `V-S8`, `VERIFICATION.md`.
 
-### RISK-CI-02 — Clean-install typecheck failed on an undeclared `glob` dependency
+### RISK-RELEASE-02 - The npm and Docker publish jobs fail without repository secrets
+
+**Status:** open · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** the `Publish to npm` job failed at "Publish packages" for v0.2.0, v0.3.1 and v0.4.0; the `Publish Docker Image` job failed at `docker/login-action` for the same three releases. `axiomsec` is not on npm at all (registry lookup returns 404), and neither are `@axiomsec/plugin`, `@axiomsec/sdk` or `@axiomsec/shared`. The `axiomsec` name is still available, so publishing would claim it. The jobs read `secrets.NPM_TOKEN`, `secrets.DOCKERHUB_USERNAME` and `secrets.DOCKERHUB_TOKEN`, and no prerequisite for them was documented anywhere in the repository.
+**Why it matters:** every release so far has produced a GitHub release with its per-platform archives but has never shipped to npm or Docker Hub. The failure surfaced as a bare registry error with no indication that a secret was missing, and the required secrets were undocumented, so the next operator had nothing to act on.
+**Fix:** both jobs now check for their secret before use and fail with a message that names it. `docs/agents/CHANGE-PLAYBOOKS.md` §I documents the release procedure and the required secrets.
+**Residual:** the secrets themselves have to be added to the repository settings; that is an operator action, not a code change. The GitHub release and the npm/Docker publishes are separate jobs, so a red publish job does not remove the release.
+**Re-verify:** read `docs/agents/CHANGE-PLAYBOOKS.md` §I; check the release page assets for a new tag.
+**Safe check:** read-only.
+**Related:** `RISK-RELEASE-01`, `RISK-BUILD-04`.
+
+### RISK-CI-02 - Clean-install typecheck failed on an undeclared `glob` dependency
 
 **Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21
 **Evidence:** The Release workflow failed at `bun typecheck` with `packages/shared/src/util/glob.ts(1,50): error TS2307: Cannot find module 'glob' or its corresponding type declarations.` Local Windows checks passed because `glob` was hoisted from `packages/axiomsec`.
