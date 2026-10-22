@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `axiomsec run` no longer drops the agent's answer after a tool call. The
+  command ended its event loop on the first `idle`, but the session reports
+  `idle` after every step, so the follow-up step that consumed the tool result
+  was never streamed. The exit code was 0 and the output was empty
+  (`RISK-SESSION-01`).
+
+### Added
+
+- A layered test strategy, documented in `docs/agents/TESTING.md` and
+  implemented in `packages/axiomsec/test/`: a policy layer that turns the
+  invariant greps into assertions, a predicate layer, an integration layer for
+  the evidence locker, a process layer that drives the shipped CLI, and an
+  end-to-end layer that scripts a model so the agent loop is exercised
+  for real. The process and end-to-end layers need the built binary, so CI
+  builds before it runs the suite.
+- A shared test harness (`packages/axiomsec/test/support/`) that gives every
+  case its own workspace, XDG state and database, and a scripted
+  OpenAI-compatible mock provider.
+
 ## [0.4.0] — 2026-10-22
 
 ### Security

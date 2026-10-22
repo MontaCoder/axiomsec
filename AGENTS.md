@@ -42,13 +42,15 @@ Use Bun 1.3.11 (the `packageManager` pin); CI installs that version, and a newer
 
 ## Tests: what is and is not covered
 
-`bun test` runs the tracked suite in `packages/axiomsec/test/` (pure predicates and file-level behaviour: boundary matching, reportability, redaction, permission precedence, evidence locker, slug containment). It is **not** end-to-end coverage: the session loop, TUI, browser and server paths are still verified by the manual `V-S*` scenarios in [VERIFICATION.md](docs/agents/VERIFICATION.md). Never write “the whole system is tested”; say which suite or scenario you ran.
+`bun test` runs the tracked suite in `packages/axiomsec/test/` (87 cases, ~22 s). It is layered — policy, predicate, integration, process and end-to-end — and the layering, the harness and the rules for adding a case are in [TESTING.md](docs/agents/TESTING.md). It is **not** coverage of everything: the TUI, browser, real providers and network paths are still verified by the manual `V-S*` scenarios in [VERIFICATION.md](docs/agents/VERIFICATION.md). Never write "the whole system is tested"; name the layer or scenario you ran.
+
+A fix without a test is a fix that comes back. Every defect this series fixed has a matching case, and each layer was proven by reverting a real fix and watching the matching test go red.
 
 ## Definition of done
 
 - [ ] `bun typecheck` passes.
 - [ ] `bun run lint` passes; warnings were read, not ignored.
-- [ ] `bun test` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/`.
+- [ ] `bun test --timeout 60000` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/`.
 - [ ] `bun run --cwd packages/axiomsec build --single --skip-install` passes, or the PR states exactly why it could not run.
 - [ ] The relevant `V-S*` scenario in [VERIFICATION.md](docs/agents/VERIFICATION.md) was run, with command output or artifact paths in the PR.
 - [ ] The change was checked against [INVARIANTS.md](docs/agents/INVARIANTS.md); any new/changed risk is in [KNOWN-RISKS.md](docs/agents/KNOWN-RISKS.md) with a date and `file:line`.
@@ -74,6 +76,7 @@ Use Bun 1.3.11 (the `packageManager` pin); CI installs that version, and a newer
 
 - [ARCHITECTURE.md](docs/agents/ARCHITECTURE.md) — runtime topology, session/tool loop, cyber kernel, surfaces, paths.
 - [INVARIANTS.md](docs/agents/INVARIANTS.md) — `SEC-*`/`ENG-*` rules with enforcement and checks.
+- [TESTING.md](docs/agents/TESTING.md) — the test layers, the harness, and how to add a regression.
 - [DEBUGGING.md](docs/agents/DEBUGGING.md) — instruments, clean-room setup, symptom-to-layer triage.
 - [BUG-HUNTING.md](docs/agents/BUG-HUNTING.md) — audit loop, command bank, reproduction patterns.
 - [CHANGE-PLAYBOOKS.md](docs/agents/CHANGE-PLAYBOOKS.md) — recipes for tools, agents, commands, plays, migrations, routes, fixes.

@@ -7,14 +7,16 @@ This file is the definition of done.
 
 | Command | What it actually does | Can you trust it? |
 |---|---|---|
-| `bun test` (root) | Runs the tracked suite in `packages/axiomsec/test/` | Only for what it covers: pure predicates and file-level behaviour |
-| `bun test --timeout 30000` in `packages/axiomsec` | Same suite; the release workflow runs it when test files exist | Same scope |
+| `bun test` (root) | Runs the tracked suite in `packages/axiomsec/test/` — policy, predicate, integration, process and end-to-end layers | Only for what it covers; see [TESTING.md](TESTING.md) |
+| `bun test --timeout 60000` | The same suite with a timeout the binary-driven layers need | Same scope |
 | `bun typecheck` | Turbo + `tsgo --noEmit` across packages | Strongest automated signal |
 | `bun run lint` | oxlint; no format check | Partial |
 | `bun run --cwd packages/axiomsec build --single --skip-install` | Bun compile + embedded migrations + `--version` smoke | Build proof, not behavior proof |
 | `bun install` | Exact lockfile resolution | Setup only |
 
-The tracked suite covers the security predicates: boundary matching, finding reportability, redaction, permission precedence, the evidence locker, and operation-slug containment (`packages/axiomsec/test/`). It is **not** end-to-end coverage: the session loop, TUI, browser, scanner and server paths are still verified by the manual `V-S*` scenarios below. **Name the suite or the scenario you ran — do not write “tests pass” as if the whole system were covered.**
+The automated suite covers the security predicates, the kernel, the CLI rules and the agent loop. It does **not** cover the TUI, the browser, real providers or the network — those are the manual `V-S*` scenarios below. **Name the layer or the scenario you ran; do not write "tests pass" as if the whole system were covered.**
+
+The process and end-to-end layers drive the **built binary**, so `bun run --cwd packages/axiomsec build --single --skip-install` has to have run; without a build those layers skip rather than fail. CI builds first, so there they always run.
 
 The test root is set in `bunfig.toml`; `packages/axiomsec/test/` is explicitly un-ignored in `.gitignore` while scratch fixture trees stay excluded.
 
@@ -26,7 +28,7 @@ Run from the repo root:
 bun install
 bun typecheck
 bun run lint
-bun test
+bun test --timeout 60000
 bun run --cwd packages/axiomsec build --single --skip-install
 ```
 
@@ -401,7 +403,7 @@ A change is done only when:
 
 - [ ] `bun typecheck` passes.
 - [ ] `bun run lint` passes; warnings were read, not ignored.
-- [ ] `bun test` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/`.
+- [ ] `bun test --timeout 60000` passes, and the new/changed behaviour is covered by a tracked test in `packages/axiomsec/test/` — see [TESTING.md](TESTING.md) §5 for which layer a defect belongs in.
 - [ ] `bun run --cwd packages/axiomsec build --single --skip-install` passes, or the PR states exactly why it could not run.
 - [ ] The relevant `V-S*` scenario was run, with command output or artifact paths in the PR.
 - [ ] The change was checked against [INVARIANTS.md](INVARIANTS.md); any new or changed risk is in [KNOWN-RISKS.md](KNOWN-RISKS.md) with a date and `file:line`.

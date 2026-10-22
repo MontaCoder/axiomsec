@@ -571,6 +571,16 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Safe check:** read-only.
 **Related:** `RISK-RELEASE-01`, `RISK-BUILD-04`.
 
+### RISK-SESSION-01 — `axiomsec run` dropped the agent's answer after a tool call
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/run.ts` broke out of its event loop on the first `session.status` event with `type: "idle"`. The session reports `idle` after **every** step (`packages/axiomsec/src/session/processor.ts:565`), so the loop ended after the tool-call step and never saw the follow-up step that consumed the tool result. The agent produced its answer — the text was in the session — but `axiomsec run` printed nothing and exited 0.
+**Why it matters:** a headless consumer of `axiomsec run --format json` sees an empty response and concludes the agent did nothing. The failure is silent: exit code 0, no error, no output. It was invisible to every other test because the session record was correct — only the *stream* was wrong.
+**Fix:** the event loop now ends on an idle that follows the finished prompt rather than on the first idle, and the stream is closed with an abort signal once the prompt resolves.
+**Reproduction (pre-fix):** with a scripted model that calls `scope` and then answers, the run printed `step_start`, `tool_use`, `step_finish` and no text, while the session held `text "AFTER-TOOL"`. Post-fix the text is printed.
+**Re-verify:** `packages/axiomsec/test/e2e/agent.test.ts` — "a tool call from the model reaches the operation and is ledgered".
+**Related:** `ENG-04`, `RISK-AUDIT-01`, `V-S11`.
+
 ### RISK-CI-02 - Clean-install typecheck failed on an undeclared `glob` dependency
 
 **Status:** fixed 2026-10-21 (Release 0.2.0) · **Severity:** medium · **Verified:** 2026-10-21
