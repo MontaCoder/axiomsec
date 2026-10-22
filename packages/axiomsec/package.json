@@ -102,6 +102,7 @@
     "@opentelemetry/sdk-trace-node": "2.6.1",
     "@opentui/core": "0.1.99",
     "@opentui/solid": "0.1.99",
+    "@hono/standard-validator": "0.2.3",
     "@parcel/watcher": "2.5.1",
     "@solid-primitives/event-bus": "1.1.2",
     "@solid-primitives/scheduled": "1.5.2",
