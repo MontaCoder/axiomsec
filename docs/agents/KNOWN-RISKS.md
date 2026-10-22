@@ -285,9 +285,10 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
 **Evidence (pre-fix):** `packages/axiomsec/src/session/prompt.ts` asked with a dynamic `<server>:<tool>` permission key; the catch-all `"*": "allow"` rule matched it, so the ask never became a human decision. The MCP tools were added to the tool map directly, so they never passed through the registry wrapper and produced no ledger events at all.
 **Why it matters:** a third-party MCP server could run any tool with no prompt and no audit record.
-**Fix:** MCP tools use the `mcp:<server>:<tool>` permission namespace, `mcp` defaults to `ask` (`packages/axiomsec/src/agent/agent.ts`), and the call is ledgered as `tool.called`/`tool.completed` in `packages/axiomsec/src/session/prompt.ts`.
-**Re-verify:** connect an MCP server, call one of its tools, and confirm the ask fires and the ledger records the call.
-**Related:** `SEC-03`, `ENG-04`, `RISK-AUDIT-01`, `V-S3`.
+**Fix:** MCP tools use the `mcp` permission with the sanitized `<server>_<tool>` key as the pattern, `mcp` defaults to `ask` (`packages/axiomsec/src/agent/agent.ts`), and the call is ledgered as `tool.called`/`tool.completed` in `packages/axiomsec/src/session/prompt.ts`.
+**Residual found 2026-10-22:** the first fix used `mcp:<key>`, which the `mcp` default rule could not match, so asks still fell through to allow; failures were also unaudited. Both are fixed and covered by `test/e2e/mcp.test.ts`; see `RISK-MCP-01` and `RISK-AUDIT-06`.
+**Re-verify:** `bun test packages/axiomsec/test/e2e/mcp.test.ts` — ask, deny, allow and ledger assertions run against a local MCP fixture.
+**Related:** `SEC-03`, `ENG-04`, `RISK-AUDIT-01`, `RISK-MCP-01`, `RISK-AUDIT-06`, `V-S3`.
 
 ### RISK-PERSIST-04 — Scope and opsec lived in a projection, not the canonical database
 
@@ -353,9 +354,9 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
 **Evidence (pre-fix):** the ledger copy of the tool args was redacted (`packages/axiomsec/src/tools/tool.ts`), but the session tool part stored the raw args (`packages/axiomsec/src/session/prompt.ts` `input: args`), and that part is persisted to SQLite and included in session exports.
 **Why it matters:** `vault set` and `identity add` take the secret as a tool argument, so every real credential landed verbatim in the session database — which is not the 0600 file the vault is.
-**Fix:** the session tool part uses the same `Tool.redactToolInput` as the ledger.
-**Re-verify:** `vault set` a canary in a disposable operation and grep the session database and the export for the canary.
-**Related:** `SEC-06`, `RISK-SECRET-02`, `RISK-SECRET-03`.
+**Fix:** the session tool part uses the same `Tool.redactToolInput` as the ledger. **Residual found 2026-10-22:** the processor wrote the first `tool-call` part with the raw streamed input (`packages/axiomsec/src/session/processor.ts` `input: value.input`) before the wrapper redacted it; the later metadata update did not overwrite that row. The processor now redacts at the first write. Regression: `packages/axiomsec/test/e2e/agent-advanced.test.ts` (“a vault secret is redacted in the persisted transcript and ledger”).
+**Re-verify:** `OPENROUTER_LIVE` is not needed; run the e2e case above. It reads `part.data` from SQLite, the ledger and stdout and asserts the canary appears in none of them.
+**Related:** `SEC-06`, `RISK-SECRET-02`, `RISK-SECRET-03`, `RISK-SECRET-06`.
 
 ### RISK-PERSIST-06 — The one-time database migration ran on every command
 
@@ -404,19 +405,20 @@ This register documents risks; it does not fix them unless an entry is marked `f
 
 ### RISK-AUDIT-03 — Side-effect metadata is still inconsistent across cyber tools
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-22
-**Evidence:** `opsec`, `scope`, `finding` and `observation` now declare `side_effects` correctly (2026-10-22). `report`, `share`, `evidence`, `doctor`, `methodology`, `analyze` and `crypto` do not declare them, so the wrapper publishes `side_effects: []` for tools that write.
-**Why it matters:** a consumer that trusts `facts_written`/`evidence_written` mis-classifies the call, and read-only tools still force a context refresh.
-**Fix direction:** declare `side_effects` on the remaining tools as they are touched.
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence (pre-fix):** most tools did not declare `side_effects`; the wrapper published `side_effects: []` even for writers such as `doctor`, `analyze`, `crypto`, the triage adapters and `bash`.
+**Fix:** `packages/axiomsec/src/tools/tool.ts` now owns `DEFAULT_SIDE_EFFECTS`, a conservative contract for every built-in tool id. Per-call metadata still wins; the wrapper uses the table only when a result carries no effects. `test/policy/invariants.test.ts` requires every `Tool.define` id to have an entry and only known categories, and `test/security/tools-surface.test.ts` asserts the published contract for `crypto` and `doctor`.
+**Why it matters:** a consumer that trusts `facts_written`/`evidence_written` no longer mis-classifies an unannotated call, and read-only tools do not force an unnecessary context refresh.
+**Re-verify:** `bun test test/policy/invariants.test.ts test/security/tools-surface.test.ts`.
 **Related:** `ENG-04`, `RISK-AUDIT-01`.
 
 ### RISK-AUDIT-04 — Ledger write failures are still swallowed in the tool wrapper
 
-**Status:** accepted (fail-open on audit writes) · **Severity:** medium · **Verified:** 2026-10-22
-**Evidence:** `packages/axiomsec/src/tools/tool.ts` still ends every ledger/workflow write in `.pipe(Effect.catch(() => Effect.succeed("")))`, and `audit_logged` is computed from the `tool.called` event alone, so a dropped `tool.completed`/`tool.error` is invisible.
-**Why it matters:** a database or lock failure can leave a `tool.called` row with no matching completion while the transcript still claims `audit_logged: true`. `ENG-07` forbids this, so the gap is real but documented.
-**Mitigation:** the tool still executes and reports its own error; the failure is visible in the log, not in the ledger.
-**Fix direction:** record a degraded-audit marker in the operation context when a ledger write fails, instead of dropping the event.
+**Status:** mitigated 2026-10-22 (fail-open; failure is now visible) · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/tool.ts` catches completion-ledger failures, logs `tool.completed ledger write failed`, and reports `audit_logged: false` instead of claiming the call was recorded. A database or lock failure can still leave a `tool.called` row with no completion.
+**Residual:** the failed event is not retried or persisted elsewhere; the operation context has no degraded marker. `ENG-07` still expects a durable marker.
+**Mitigation:** the tool executes and reports its own error, and the transcript now exposes the degraded audit state.
+**Fix direction:** write a durable degraded-audit marker through a separate channel when the ledger is unavailable.
 **Related:** `ENG-07`, `ENG-04`, `RISK-PERSIST-01`.
 
 ### RISK-NET-03 — Server accepts auth tokens in URLs
@@ -614,6 +616,214 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Fix direction:** If a real postinstall behavior is needed later, restore the file and the publish checks together.
 **Related:** `V-S8`.
 
+## Fixed during the 2026-10-22 test campaign
+
+These defects were found while building the layered suite, reproduced against
+the built binary or the real provider, fixed, and pinned by a test. Each entry
+names the test that must go red if the fix is reverted.
+
+### RISK-SECRET-06 — Inline secrets and replay tool errors escaped redaction
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/core/replay/redact.ts` skipped an `Authorization=`/`Cookie=` assignment when another `[redacted:…]` placeholder appeared later on the same line, so `check Authorization: Bearer SECRET and [redacted:jwt]` kept `SECRET`. `packages/axiomsec/src/core/replay/format.ts` copied `state.error` into a replay without `redactString`, so a tool error containing a header value survived a `--redact` replay.
+**Fix:** the assignment guard only skips a value that is already a redaction placeholder (`(?!\s*\[redacted)`), and replay tool errors pass through `redactString`.
+**Test:** `test/core/replay/format.test.ts` (“tool errors are redacted too”) and the existing redaction suite.
+**Related:** `SEC-06`, `RISK-SECRET-01`, `RISK-SECRET-04`.
+
+### RISK-SCOPE-08 — Scope host matching was case-sensitive
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/core/boundary/evaluate.ts` compared `URL.hostname` (lowercased by the parser) with the raw pattern, so `in_scope: ["Example.COM"]` never matched `https://example.com`. Host-only requests had the same problem in the opposite direction.
+**Fix:** scheme-less URL and host patterns compare lowercased values; scheme patterns already used parsed hostnames.
+**Test:** `test/core/boundary/edge.test.ts` (“host matching is case-insensitive because DNS names are”, “a scheme-less host pattern is case-insensitive on the hostname”).
+**Related:** `SEC-01`, `RISK-SCOPE-04`.
+
+### RISK-PROOF-06 — A blank evidence ref satisfied the evidence half
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `isReportableFinding` and `Oracle.verifyFindingProof` only checked `Array.isArray` and `length > 0`, so `evidence_refs: [""]` or `["   "]` made a finding reportable/proof-passed even though no artifact can resolve to a blank digest.
+**Fix:** `hasEvidenceRef` requires at least one non-blank string, and both the predicate and the oracle use it.
+**Test:** `test/core/cyber/finding-edge.test.ts` (“an empty-string evidence ref does not count”).
+**Related:** `SEC-05`, `RISK-PROOF-01`, `RISK-PROOF-03`.
+
+### RISK-PERSIST-10 — A dead lock owner stalled the next command for 60 seconds
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/shared/src/util/flock.ts` decided staleness only from the heartbeat/meta mtime (`staleMs` 60 s). A command that exited via `process.exit` left a lock behind, and the next command waited the full minute. Reproduced by denying a tool with `debug agent` and then listing the agent: 60.9 s before the fix, ~0.6 s after.
+**Fix:** a same-host lock whose recorded PID no longer exists (ESRCH) is immediately stale. A live PID, EPERM, an unknown host or a malformed meta still falls back to the heartbeat age.
+**Test:** `test/core/support/flock.test.ts` (dead PID, live PID, foreign host, clean release).
+**Related:** `ENG-07`, `RISK-PERSIST-01`.
+
+### RISK-PERSIST-11 — Concurrent evidence puts raced, and an extension could escape the locker
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/core/evidence/store.ts` wrote every artifact to the same `.${sha}.${ext}.tmp` path before the manifest lock, so sixteen concurrent puts of the same bytes rejected with rename errors (reproduced: 5/16 rejected). `ext` was joined into the file name unchecked; `../../../escaped` produced a path outside the evidence directory.
+**Fix:** unique temp names per writer, a lost rename race is success when the destination exists, extensions are reduced to a short alphanumeric token on write, and reads fail closed on a malformed manifest extension.
+**Test:** `test/core/evidence/edge.test.ts` (sixteen concurrent puts, hostile extensions, hand-edited manifest).
+**Related:** `SEC-04`, `SEC-01`, `RISK-PERSIST-05`.
+
+### RISK-CONFIG-01 — Every command installed `@axiomsec/plugin` into every config directory
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/config/config.ts` forked `setupConfigDir` for every config directory unconditionally; it wrote a `.gitignore`, `node_modules` and `package.json` into the project’s `.axiomsec` and contacted npm. When the install was interrupted, the next command waited on the npm lock and stayed alive after printing its result (observed 60 s; `cli-workflow` denied-tool case).
+**Fix:** dependency setup runs only when the directory has a plugin file, a `tool`/`tools` directory, or declared plugins.
+**Test:** `test/security/cli-workflow.test.ts` (“an explicit deny rule removes a tool from the model-facing surface” completes in ~2 s; the pre-fix run took >60 s).
+**Related:** `ENG-03`, `RISK-PERSIST-10`, `RISK-CI-01`.
+
+### RISK-TIME-03 — A permanent quota was retried forever, and `run` exited 0 on it
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/session/retry.ts` had no attempt cap and did not classify a daily free-tier quota as permanent. A live OpenRouter 429 (`free-models-per-day`) kept the process retrying for >3 minutes until killed. `packages/axiomsec/src/cli/cmd/run.ts` captured `session.error` but never set a non-zero exit code, so a headless consumer saw exit 0 with only an error event.
+**Fix:** `RETRY_MAX_ATTEMPTS = 10`; `free-models-per-day`, insufficient credits and quota-exceeded messages are not retried; `run` sets exit 1 when it saw a session error.
+**Test:** `test/core/session/retry.test.ts`, `test/e2e/agent-advanced.test.ts` (quota and transient-503 cases).
+**Reproduction evidence:** live call at 2026-10-22T19:47Z returned exit 1 and one `error` event with the OpenRouter quota message.
+**Related:** `ENG-03`, `RISK-PERM-03`.
+
+### RISK-CLI-01 — Operation JSON went to stderr
+
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/cli/cmd/operation.ts` used `UI.println`, which writes stderr, for `--format json` and for context/markdown output. `axiomsec operation list --format json > ops.json` produced an empty file.
+**Fix:** machine-readable operation output is written to stdout; human status/error messages remain on stderr.
+**Test:** `test/security/cli-workflow.test.ts` parses list/show JSON from stdout and errors from stderr.
+**Related:** `ENG-04`, `RISK-DOC-02`.
+
+### RISK-TOOL-04 — `debug agent` ignored `toolset_exclude`
+
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/session/llm.ts` removes `agent.toolset_exclude` ids for real model requests, but `packages/axiomsec/src/cli/cmd/debug/agent.ts` listed the unfiltered registry. `debug agent osint` showed `scanner`, `crypto` and `net` even though a real osint model never sees them.
+**Fix:** the debug listing filters the agent’s excluded ids.
+**Test:** `test/security/tools-surface.test.ts` and `test/e2e/agent-advanced.test.ts` (“a specialist lane removes its out-of-lane tools from the model request”).
+**Related:** `ENG-04`, `RISK-AUDIT-01`.
+
+### RISK-TOOL-05 — `evidence add_file` discarded the file extension
+
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `Evidence.put` chose `bin` when neither `mime` nor `ext` was supplied, so a text file imported by `evidence add_file` was stored as `.bin` and `get` refused to preview it. Dotfiles such as `.env` have no `path.extname`.
+**Fix:** infer a safe extension from the source path (including dotfiles), and recognize common text extensions for previews.
+**Test:** `test/security/cli-workflow.test.ts` (“evidence add_file respects the read and external-directory gates” asserts the stored preview).
+**Related:** `SEC-06`, `RISK-PERSIST-05`.
+
+### RISK-INTEL-01 — A version prefixed with `v` was not normalized
+
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `normalizeComponent`’s product patterns required a digit, so `nginx v1.24.0` fell through while `cleanVersion` was already written to strip the prefix.
+**Fix:** the patterns accept an optional `v`, and `cleanVersion` strips it.
+**Test:** `test/core/knowledge/component.test.ts` (“strips a leading v from the version”).
+**Related:** `RISK-RELEASE-01`.
+
+### RISK-MCP-01 — MCP tools bypassed the default ask and their failures were unaudited
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `packages/axiomsec/src/session/prompt.ts` asked with `permission: "mcp:" + key`, while the default rule is `{ permission: "mcp", pattern: "*" }`. `Wildcard.match("mcp:echo_echo", "mcp")` is false, so the catch-all `"*": allow` won and the MCP tool executed without a prompt. A real local MCP fixture confirmed it. The same block appended `tool.called` but no `tool.error`, so a denied/failed MCP call vanished from the audit trail.
+**Fix:** the permission is `mcp` with the server/tool key as the pattern; a deny rule still wins. The ask and execute are wrapped in `Effect.exit`; failures append `tool.error` before the failure propagates.
+**Test:** `test/e2e/mcp.test.ts` (ask, deny, allow and ledger cases) using `test/fixtures/mcp-echo.ts`.
+**Related:** `SEC-03`, `ENG-04`, `RISK-AUDIT-02`, `RISK-AUDIT-06`.
+
+### RISK-PERM-09 — `autonomy` could elevate the session without approval
+
+**Status:** fixed 2026-10-22 · **Severity:** critical · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/autonomy.ts` writes a session-wide wildcard `allow` ruleset, but its `ctx.ask({ permission: "autonomy" })` resolved through the catch-all `"*": allow` because no `autonomy` default existed. A model could set `auto`, then run `bash` or other ask-level tools without a prompt for the rest of the session.
+**Fix:** `packages/axiomsec/src/agent/agent.ts` defaults `autonomy: "ask"`.
+**Test:** `test/security/tools-surface.test.ts` (approval and kernel fact) and `test/e2e/agent-advanced.test.ts` (“the model cannot self-elevate autonomy without approval”).
+**Related:** `SEC-03`, `RISK-PERM-07`, `RISK-PERM-10`.
+
+### RISK-PERM-10 — Adapter-backed triage tools defaulted to allow
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `binary_triage`, `iac_triage`, `cloud_posture` and `container_surface` call `ctx.ask`, but their permission keys were absent from `packages/axiomsec/src/agent/agent.ts`; the catch-all allow made those asks decorative. The latter two can read cloud credentials or pull container images.
+**Fix:** all four keys default to `ask`; unavailable adapters still return a visible “Required adapter … not installed” result before any prompt.
+**Test:** `test/security/tools-surface.test.ts` (agent ruleset and missing-adapter cases).
+**Related:** `SEC-03`, `ENG-03`, `RISK-PERM-04`.
+
+### RISK-AUDIT-05 — Argument-validation failures produced no ledger event
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/tool.ts` parsed arguments before writing `tool.called`; when Zod rejected a call, the wrapper returned the error to the model with no `cyber_ledger` row at all. A model could probe malformed plugin/tool inputs invisibly.
+**Fix:** the attempt is ledgered before validation (with redacted args); a validation failure appends `tool.error` with `reason: invalid arguments`.
+**Test:** `test/e2e/plugin.test.ts` (“invalid plugin arguments are rejected before execution”).
+**Related:** `ENG-04`, `SEC-06`, `RISK-AUDIT-04`.
+
+### RISK-AUDIT-06 — MCP failures were not ledgered
+
+**Status:** fixed 2026-10-22 · **Severity:** medium · **Verified:** 2026-10-22
+**Evidence:** the MCP branch in `packages/axiomsec/src/session/prompt.ts` recorded `tool.called` and only the success path; a permission deny or `callTool` error ended the effect without `tool.error`.
+**Fix:** the MCP ask + execute is captured with `Effect.exit`; failures append `tool.error` and then rethrow.
+**Test:** `test/e2e/mcp.test.ts` deny and ask cases.
+**Related:** `ENG-07`, `RISK-MCP-01`, `RISK-AUDIT-02`.
+
+### RISK-SCOPE-09 — `dir-fuzz` ignored the boundary for every fuzzed path
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/scanners/dir-fuzzer.ts` used bare `fetch` for the baseline and every word. The scanner checked only the target URL, so a path-scoped operation could be probed at any path on the same origin.
+**Fix:** the scanner passes its `allowUrl` callback; the baseline and every word are refused before the request. Blocked paths are counted separately.
+**Test:** `test/core/scanner/scanners.test.ts` (baseline and words go through the callback; redirects are not followed).
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-05`.
+
+### RISK-SCOPE-10 — `appsec_probe` checked only the origin, not each synthetic route
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/appsec-probe.ts` guarded the target origin, then its probe plan fetched `/login`, IDOR and CORS paths with bare `fetch` and `redirect: "manual"`. A path-scoped boundary was bypassed for those requests.
+**Fix:** every planned request calls `Guard.checkUrl`; denied routes return `path outside operation boundary` without fetching.
+**Test:** `test/security/network-boundary.test.ts` (“appsec probe per-route boundary”) narrows the canonical scope to `/allowed` and confirms `/login` is never requested.
+**Related:** `SEC-01`, `SEC-02`, `RISK-SCOPE-05`, `RISK-SCOPE-09`.
+
+### RISK-CLI-02 — Empty `session list --format json` emitted nothing
+
+**Status:** fixed 2026-10-22 · **Severity:** low · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/cli/cmd/session.ts` returned early for zero sessions, so a machine consumer received an empty stream instead of a JSON array.
+**Fix:** empty JSON output is `[]`.
+**Test:** `test/security/serve-replay.test.ts` (delete the only session, then parse the next list).
+**Related:** `RISK-CLI-01`.
+
+### RISK-PERM-11 — Per-prompt tool toggles replaced the session ruleset
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/session/prompt.ts` replaced `session.permission` with the per-prompt tool toggles (`tools: { todowrite:false, task:false }`) whenever any toggle was supplied. A `task` subagent therefore lost the parent run’s `question`/`plan_exit` denies the moment TaskTool spawned it; a pentest subagent re-enabled `question` through its agent defaults and blocked the headless loop waiting for an answer that could never arrive.
+**Fix:** prompt tool toggles are merged *before* the existing session ruleset, and session rules are last so an operator deny wins. TaskTool also carries the parent session’s deny rules into the new child session.
+**Test:** `test/e2e/agent-advanced.test.ts` (“a subagent inherits the parent run's deny rules”) inspects the child tool surface and ledger.
+**Related:** `SEC-03`, `RISK-PERM-09`, `RISK-SESSION-02`.
+
+### RISK-SESSION-02 — Headless run ignored subagent permission asks
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/cli/cmd/run.ts` handled `permission.asked` only when `properties.sessionID === sessionID` (the parent). A `task` child session’s ask was never answered; the child waited forever and the run hung.
+**Fix:** the run’s approval policy applies to every permission request raised in its process; without `--dangerously-skip-permissions` it auto-rejects, with the flag it approves once.
+**Test:** `test/e2e/agent-advanced.test.ts` (“a subagent permission ask is rejected instead of hanging the headless run”).
+**Related:** `RISK-PERM-03`, `RISK-PERM-11`, `RISK-SESSION-01`.
+
+### RISK-SESSION-03 — Forked sessions lost their parent and permission policy
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/session/session.ts` `Session.fork` called `createNext` without `parentID` or `permission`. The `/session/:id/children` API could never find a fork, and a headless run resumed with `--fork` lost the parent run’s `question`/`plan_exit` denies, re-opening the hang path that `RISK-PERM-11` closed.
+**Fix:** the fork now records `parentID: original session` and copies `original.permission`.
+**Test:** `test/security/serve-replay.test.ts` authenticated session API case (fork parent, children listing, inherited deny).
+**Related:** `SEC-03`, `RISK-PERM-11`, `RISK-SESSION-02`.
+
+### RISK-SCOPE-11 — WebRTC and WebTransport bypassed the browser boundary
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/tools/browser.ts` guarded HTTP with `context.route` and WebSockets with `context.routeWebSocket`, but a page could construct `RTCPeerConnection` with a STUN URL or `WebTransport`; both use UDP/QUIC and never pass through Playwright routing. A page served from in-scope `127.0.0.1` sent two STUN datagrams to an out-of-scope listener on `127.0.0.2` during an end-to-end `browser` run.
+**Fix:** the browser context installs an init script in every frame that denies `RTCPeerConnection`, `webkitRTCPeerConnection` and `WebTransport` with `NotAllowedError`; `browser.txt` states the limitation. Service-worker requests were checked separately and do pass through the context route.
+**Test:** `test/security/network-boundary.test.ts` (“a WebRTC STUN request cannot leave the boundary”; observed 2 datagrams before the fix) and (“a service worker fetch cannot leave the boundary”).
+**Related:** `SEC-02`, `RISK-SCOPE-05`, `RISK-SCOPE-06`, `RISK-SCOPE-09`, `RISK-SCOPE-10`.
+
+### RISK-SCAN-01 — A quiet open port was reported closed and service mode never probed
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/scanners/port-scanner.ts` registered a connection-level `timeout` listener that resolved `open: false` before the in-connect banner listener could resolve `open: true`. Any service that waits for a request (every HTTP server) was therefore reported closed. `packages/axiomsec/src/scanners/service-prober.ts` had the same listener ordering, so its “no banner — send an active probe” branch never ran; the socket was destroyed and the port resolved to `null`.
+**Reproduction (pre-fix):** `bun /tmp/probe-scan.ts` against a loopback HTTP listener printed `openPorts: []` after the 1 s timeout; `probeServices` returned no service.
+**Fix:** both probes settle once, track whether `connect` fired, and treat a post-connect timeout as an open port with no banner. The service prober now sends its HTTP probe on the first timeout and only reports `filtered` if that answer also times out.
+**Test:** `test/core/scanner/scanners.test.ts` (“a TCP listener that sends no banner is still reported open”, “service mode sends an active probe to an HTTP listener”) and `test/security/network-boundary.test.ts` (“a loopback listener is found and identified”).
+**Related:** `RISK-TOOL-01`, `V-S3`.
+
+### RISK-SECRET-07 — Stored provider credentials were exported to model-spawned subprocesses
+
+**Status:** fixed 2026-10-22 · **Severity:** high · **Verified:** 2026-10-22
+**Evidence:** `packages/axiomsec/src/providers/provider.ts` copied an API auth key into `process.env` (`AWS_BEARER_TOKEN_BEDROCK`, `AICORE_SERVICE_KEY`) so the provider SDK could read it. Every child-process boundary then copied the whole environment: the `bash` tool (`tools/bash.ts` `shellEnv`), local MCP servers (`mcp/mcp.ts` `StdioClientTransport`), the PTY (`terminal/service.ts`), and `support/process.ts` spawn. With a canary written to `auth.json` as `sap-ai-core`, a scripted model ran `printenv AICORE_SERVICE_KEY` and received the canary; the credential was also available to third-party MCP server code.
+**Fix:** `support/auth-env.ts` records which names AxiomSec itself injected and `withoutAuthEnv` removes only those from a child environment. The four spawn boundaries use it; an operator's own environment variable and an explicit plugin `shell.env` value are preserved, and provider SDKs still see `process.env`.
+**Test:** `test/e2e/agent-advanced.test.ts` (“a stored provider key is not exported to the bash tool”; observed red before the fix) and `test/e2e/mcp.test.ts` (“a stored provider key is not exported to the MCP server”).
+**Related:** `SEC-06`, `RISK-SECRET-02`, `RISK-SECRET-05`.
+
 ## Low
 
 ### RISK-DOC-01 — README/CHANGELOG advertise `/initialize`; the command is `/init`
@@ -638,32 +848,30 @@ This register documents risks; it does not fix them unless an entry is marked `f
 
 ### RISK-LINT-01 — Lint/format configuration is inconsistent
 
-**Status:** fixed 2026-10-21 · **Severity:** low · **Verified:** 2026-10-21
+**Status:** fixed 2026-10-21 · **Severity:** low · **Verified:** 2026-10-22
 **Evidence (pre-fix):** `.oxlintrc.json:3-5,44-49` had duplicate `options` keys; Prettier config at `package.json:101-104` is unenforced (no format script/CI); `.editorconfig:9` set 80 columns while Prettier uses 120.
 **Why it matters:** Agents can “fix” formatting in unrelated files or trust a lint pass that ignores formatting.
-**Fix:** `.oxlintrc.json` now has one `options` block; `.editorconfig` uses 120 columns. Prettier remains intentionally unenforced (no format script or CI gate), documented here rather than silently assumed.
-**Residual:** `bun run lint` still reports warnings (858 baseline after this cleanup) with 0 errors; do not mass-format unrelated files.
+**Fix:** `.oxlintrc.json` now has one `options` block; `.editorconfig` uses 120 columns. The 2026-10-22 hardening pass excluded `packages/sdk/src/v2/gen/**` (generated) from lint, fixed high-signal findings in retained files (unhandled post-transaction promises, unsafe header spreads, `eval` in debug params, object stringification), and reverted unrelated autofix churn. Prettier remains intentionally unenforced (no format script or CI gate), documented here rather than silently assumed.
+**Residual:** `bun run lint` reports 832 warnings and 0 errors (down from 990); remaining warnings are mostly `no-unsafe-type-assertion` and `consistent-return` style findings. Do not mass-format unrelated files.
 **Re-verify:** `sed -n '1,20p' .oxlintrc.json`; `sed -n '9p' .editorconfig`; `bun run lint`.
 **Safe check:** Read-only; run `bun run lint` if needed.
 **Related:** `ENG-05`, `V-S8`.
 
 ### RISK-CI-01 — CI lacks tests, format, and security checks
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-21
-**Evidence:** `.github/workflows/ci.yml:18-45` runs typecheck, lint, and a single-platform build only.
-**Why it matters:** Regressions in behavior, formatting, dependency risk, and platform compatibility can merge green.
-**Re-verify:** `sed -n '18,45p' .github/workflows/ci.yml`.
-**Safe check:** Read-only.
-**Fix direction:** Add a real test job, format check, dependency audit, and an OS matrix when the test story exists.
+**Status:** fixed 2026-10-22 (tests) · **Severity:** low · **Verified:** 2026-10-22
+**Evidence (pre-fix):** `.github/workflows/ci.yml` ran typecheck, lint, and a single-platform build only.
+**Fix:** CI now builds the binary before a dedicated `bun test --timeout 60000` job, so the integration and end-to-end layers run against a real artifact instead of silently skipping. Typecheck, lint, and the build smoke test remain separate jobs.
+**Residual:** no dependency audit, no OS matrix, and Prettier remains intentionally unenforced; browser and live-provider tests skip when Chromium or keys are absent.
+**Re-verify:** `sed -n '18,62p' .github/workflows/ci.yml`.
 **Related:** `VERIFICATION.md`, `RISK-RELEASE-01`.
 
 ## Leads (not verified)
 
 These are suspicions from code reading, not confirmed facts. Do not cite them as bugs until reproduced.
 
-- **Browser non-HTTP egress** — `routeWebSocket` now covers `ws(s)`, but WebRTC data channels, DNS prefetch/preconnect, and service workers may still reach out-of-boundary hosts. Confirm with a loopback page using `RTCPeerConnection`; do not assume route coverage is complete.
+- **Browser DNS prefetch/preconnect** — HTTP, WebSocket, WebRTC and WebTransport egress are covered and service-worker fetches pass through the route guard. DNS prefetch/preconnect can still contact a host without an HTTP request; confirm with a loopback DNS fixture before claiming complete browser egress coverage.
 - **Triage adapter file scope** — `binary_triage` and `iac_triage` now gate user paths, but `cloud_posture` and `container_surface` may read provider/container configuration outside the workspace without an equivalent `external_directory`/`read` gate. Confirm with a canary config path.
-- **Provider env writes** — provider auth appears to write credentials into `process.env` (`packages/axiomsec/src/providers/provider.ts` near the env-direct reads). Confirm whether secrets can leak to child processes or logs.
 - **Swallowed projection failures** — `packages/axiomsec/src/core/cyber/cyber.ts` and `packages/axiomsec/src/core/operation/operation.ts` use best-effort catches around JSONL/projection writes. Confirm whether a failure can leave DB and projections inconsistent without a warning.
 - **No operation HTTP API** — the route tree has no operation/scope/finding endpoints (`packages/axiomsec/src/server/instance/index.ts:34-105`). Confirm no SDK client assumes them; if a client does, it will 404.
 

@@ -14,7 +14,7 @@ This file is the definition of done.
 | `bun run --cwd packages/axiomsec build --single --skip-install` | Bun compile + embedded migrations + `--version` smoke | Build proof, not behavior proof |
 | `bun install` | Exact lockfile resolution | Setup only |
 
-The automated suite covers the security predicates, the kernel, the CLI rules and the agent loop. It does **not** cover the TUI, the browser, real providers or the network — those are the manual `V-S*` scenarios below. **Name the layer or the scenario you ran; do not write "tests pass" as if the whole system were covered.**
+The automated suite covers the security predicates, the kernel, the CLI rules and the agent loop. Browser HTTP/WebSocket/WebRTC and service-worker guards run automatically when Chromium is available, and live providers are opt-in in [TESTING.md](TESTING.md) §4b. It does **not** cover the TUI, TLS policy, DNS prefetch/preconnect, the full default provider tool surface, or arbitrary network paths — those remain manual `V-S*` scenarios below. **Name the layer or the scenario you ran; do not write "tests pass" as if the whole system were covered.**
 
 The process and end-to-end layers drive the **built binary**, so `bun run --cwd packages/axiomsec build --single --skip-install` has to have run; without a build those layers skip rather than fail. CI builds first, so there they always run.
 
