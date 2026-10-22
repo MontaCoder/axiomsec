@@ -4,7 +4,6 @@ import { buffer } from "node:stream/consumers"
 import { errorMessage } from "./error"
 
 export type Stdio = "inherit" | "pipe" | "ignore"
-export type Shell = boolean | string
 
 export interface Options {
   cwd?: string
@@ -12,7 +11,6 @@ export interface Options {
   stdin?: Stdio
   stdout?: Stdio
   stderr?: Stdio
-  shell?: Shell
   abort?: AbortSignal
   kill?: NodeJS.Signals | number
   timeout?: number
@@ -61,7 +59,6 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
 
   const proc = launch(cmd[0], cmd.slice(1), {
     cwd: opts.cwd,
-    shell: opts.shell,
     env: opts.env === null ? {} : opts.env ? { ...process.env, ...opts.env } : undefined,
     stdio: [opts.stdin ?? "ignore", opts.stdout ?? "ignore", opts.stderr ?? "ignore"],
     windowsHide: process.platform === "win32",
@@ -115,7 +112,6 @@ export async function run(cmd: string[], opts: RunOptions = {}): Promise<Result>
     cwd: opts.cwd,
     env: opts.env,
     stdin: opts.stdin,
-    shell: opts.shell,
     abort: opts.abort,
     kill: opts.kill,
     timeout: opts.timeout,

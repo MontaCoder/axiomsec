@@ -1709,7 +1709,16 @@ At the end of planning, after questions are resolved and the plan file is comple
           const sh = Shell.preferred()
           const results = yield* Effect.promise(() =>
             Promise.all(
-              shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
+              shellMatches.map(async ([, cmd]) => {
+                const shellName = Shell.name(sh)
+                const shellArgs =
+                  shellName === "cmd"
+                    ? ["/c"]
+                    : shellName === "powershell" || shellName === "pwsh"
+                      ? ["-Command"]
+                      : ["-c"]
+                return (await Process.text([sh, ...shellArgs, cmd], { nothrow: true })).text
+              }),
             ),
           )
           let index = 0

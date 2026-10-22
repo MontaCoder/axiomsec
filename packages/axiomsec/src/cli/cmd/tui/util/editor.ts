@@ -22,7 +22,6 @@ export async function open(opts: { value: string; renderer: CliRenderer }): Prom
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
-      shell: process.platform === "win32",
     })
     await proc.exited
     const content = await Filesystem.readText(filepath)
