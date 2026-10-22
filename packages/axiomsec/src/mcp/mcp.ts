@@ -300,12 +300,19 @@ export const layer = Layer.effect(
         )
       }
 
+      // A redirect is followed only within the endpoint's origin by default, so
+      // the configured headers and OAuth credentials are never re-sent to
+      // another host. Operators whose MCP server redirects cross-origin can
+      // opt in explicitly. (GHSA-6prh-2h8m-c8cw)
+      const redirectPolicy = mcp.redirect_policy ?? "same-origin"
+
       const transports: Array<{ name: string; transport: TransportWithAuth }> = [
         {
           name: "StreamableHTTP",
           transport: new StreamableHTTPClientTransport(new URL(mcp.url), {
             authProvider,
             requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            redirectPolicy,
           }),
         },
         {
@@ -313,6 +320,7 @@ export const layer = Layer.effect(
           transport: new SSEClientTransport(new URL(mcp.url), {
             authProvider,
             requestInit: mcp.headers ? { headers: mcp.headers } : undefined,
+            redirectPolicy,
           }),
         },
       ]
@@ -760,7 +768,10 @@ export const layer = Layer.effect(
         auth,
       )
 
-      const transport = new StreamableHTTPClientTransport(new URL(mcpConfig.url), { authProvider })
+      const transport = new StreamableHTTPClientTransport(new URL(mcpConfig.url), {
+        authProvider,
+        redirectPolicy: mcpConfig.redirect_policy ?? "same-origin",
+      })
 
       return yield* Effect.tryPromise({
         try: () => {

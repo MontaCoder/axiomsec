@@ -377,6 +377,12 @@ export const McpRemote = z
       .positive()
       .optional()
       .describe("Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified."),
+    redirect_policy: z
+      .enum(["same-origin", "follow"])
+      .optional()
+      .describe(
+        "How to handle an HTTP redirect from the MCP server URL. 'same-origin' (default) follows a redirect only when it stays on the same origin, so credentials are never sent to another host. 'follow' follows cross-origin redirects too and re-sends the configured headers and request body, which is only safe for a server you control.",
+      ),
   })
   .strict()
   .meta({

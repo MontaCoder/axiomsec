@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bumped the dependencies that carried known advisories on the default branch:
+  `@modelcontextprotocol/sdk` 1.27.1 to 1.32.1 (OAuth credential leakage,
+  cross-origin redirect header re-send, session-scoped tasks, request body
+  memory exhaustion, cross-service bearer tokens), `@ai-sdk/provider-utils`
+  4.0.23 to 4.0.33 with `@ai-sdk/provider` 3.0.8 to 3.0.12 (uncontrolled
+  resource consumption), `minimatch` 10.0.3 to 10.2.5 (ReDoS), `hono` 4.10.7
+  to 4.13.13 (arbitrary file access, JWT algorithm confusion, CORS origin
+  reflection, SSE header injection), `diff` 8.0.2 to 8.0.4 and `turbo` 2.8.13
+  to 2.9.18. Overrides pin a single copy of each package so the whole tree
+  resolves to the fixed version.
+- The MCP client now follows an HTTP redirect only within the endpoint's
+  origin, so configured headers and OAuth credentials are never re-sent to
+  another host. A remote MCP server that redirects cross-origin can opt back
+  in with `mcp.<name>.redirect_policy: "follow"`.
 - A finding can no longer certify itself. The replay artifact is tracked
   separately and never counts as evidence, so promotion needs at least one
   independently supplied ref that resolves and re-hashes

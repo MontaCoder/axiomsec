@@ -31,14 +31,14 @@
       "@cloudflare/workers-types": "4.20251008.0",
       "@solid-primitives/storage": "4.3.3",
       "@tailwindcss/vite": "4.1.11",
-      "diff": "8.0.2",
+      "diff": "8.0.4",
       "dompurify": "3.3.1",
       "drizzle-kit": "1.0.0-beta.19-d95b7a4",
       "drizzle-orm": "1.0.0-beta.19-d95b7a4",
       "effect": "4.0.0-beta.48",
       "ai": "6.0.168",
       "cross-spawn": "7.0.6",
-      "hono": "4.10.7",
+      "hono": "4.13.13",
       "hono-openapi": "1.1.2",
       "fuzzysort": "3.1.0",
       "luxon": "3.6.1",
@@ -70,7 +70,7 @@
     "oxlint": "1.60.0",
     "oxlint-tsgolint": "0.21.0",
     "prettier": "3.6.2",
-    "turbo": "2.8.13"
+    "turbo": "2.9.18"
   },
   "dependencies": {
     "@axiomsec/plugin": "workspace:*",
@@ -113,7 +113,12 @@
   ],
   "overrides": {
     "@types/bun": "catalog:",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "@ai-sdk/provider": "3.0.12",
+    "@ai-sdk/provider-utils": "4.0.33",
+    "@hono/node-server": "1.19.17",
+    "diff": "8.0.4",
+    "hono": "4.13.13"
   },
   "patchedDependencies": {
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
