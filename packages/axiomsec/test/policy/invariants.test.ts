@@ -78,6 +78,45 @@ describe("side-effect categories are a closed set (ENG-04)", () => {
     }
     expect(offenders).toEqual([])
   })
+
+  test("every built-in tool id has a default side-effect contract", async () => {
+    const text = await read(join(TOOLS, "tool.ts"))
+    const block = text.slice(text.indexOf("DEFAULT_SIDE_EFFECTS"), text.indexOf("\n}", text.indexOf("DEFAULT_SIDE_EFFECTS")))
+    const declared = new Map<string, string[]>()
+    for (const match of block.matchAll(/^\s{2}([a-z_]+):\s*\[([^\]]*)\]/gm)) {
+      declared.set(
+        match[1],
+        match[2]
+          .split(",")
+          .map((item) => item.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean),
+      )
+    }
+
+    const ids = new Set<string>()
+    for (const file of sourceFiles(TOOLS)) {
+      const source = await read(file)
+      for (const match of source.matchAll(/Tool\.define(?:<[^>]*>)?\(\s*"([a-z_]+)"/g)) ids.add(match[1])
+    }
+
+    // TaskTool takes its id from a variable, so the source regex cannot see it.
+    const indirect = new Set(["task"])
+    expect([...ids].filter((id) => !declared.has(id))).toEqual([])
+    expect([...declared.keys()].filter((id) => !ids.has(id) && !indirect.has(id))).toEqual([])
+    const known = new Set([
+      "read_only",
+      "writes_ledger",
+      "writes_facts",
+      "writes_evidence",
+      "network",
+      "mutates_target",
+      "mutates_workspace",
+    ])
+    const invalid = [...declared].flatMap(([id, effects]) =>
+      effects.filter((effect) => !known.has(effect)).map((effect) => `${id}: ${effect}`),
+    )
+    expect(invalid).toEqual([])
+  })
 })
 
 describe("target egress is boundary-checked (SEC-01, SEC-02)", () => {
@@ -120,5 +159,54 @@ describe("operation paths keep their containment checks (SEC-01)", () => {
   test("the deliverable bundle resolves its directory through the slug rules", async () => {
     const text = await read(join(SRC, "core", "deliverable", "build.ts"))
     expect(text).toContain("containedPath")
+  })
+})
+
+describe("security-state tools cannot fall through the catch-all allow (SEC-03)", () => {
+  test("autonomy, mcp and adapter triage are explicit ask defaults", async () => {
+    const text = await read(join(SRC, "agent", "agent.ts"))
+    for (const key of ["autonomy", "mcp", "binary_triage", "iac_triage", "cloud_posture", "container_surface"]) {
+      expect(text).toContain(`${key}: "ask"`)
+    }
+  })
+
+  test("MCP uses the mcp permission with a tool-key pattern", async () => {
+    const text = await read(join(SRC, "session", "prompt.ts"))
+    expect(text).toContain('const permission = "mcp"')
+    expect(text).toContain("patterns: [key]")
+    expect(text).not.toContain('const permission = `mcp:${key}`')
+  })
+
+  test("per-prompt tool toggles are merged before the session ruleset", async () => {
+    const text = await read(join(SRC, "session", "prompt.ts"))
+    const index = text.indexOf("Per-prompt tool toggles")
+    expect(index).toBeGreaterThan(0)
+    const nearby = text.slice(index, index + 700)
+    expect(nearby).toContain("Permission.merge(permissions, session.permission ?? [])")
+  })
+})
+
+describe("the audit wrapper records the attempt before validation (ENG-04)", () => {
+  test("tool.called is written before the argument schema parse", async () => {
+    const text = await read(join(SRC, "tools", "tool.ts"))
+    const called = text.indexOf('kind: "tool.called"')
+    const parse = text.indexOf("toolInfo.parameters.parse")
+    expect(called).toBeGreaterThan(0)
+    expect(parse).toBeGreaterThan(0)
+    expect(called).toBeLessThan(parse)
+  })
+})
+
+describe("discovered subresources keep their boundary callbacks (SEC-02)", () => {
+  test("dir-fuzz checks every word through allowUrl", async () => {
+    const text = await read(join(SRC, "scanners", "dir-fuzzer.ts"))
+    expect(text).toContain("allowUrl")
+    expect(text).toContain("blocked++")
+  })
+
+  test("appsec probe checks each planned route through allowUrl", async () => {
+    const text = await read(join(SRC, "tools", "appsec-probe.ts"))
+    expect(text).toContain("input.allowUrl")
+    expect(text).toContain("routesFor(origin, probePlan, timeout, ctx.abort, allowUrl)")
   })
 })

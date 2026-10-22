@@ -8,6 +8,8 @@ export type ToolCall = {
 export type Turn =
   | { kind: "text"; content: string }
   | { kind: "tool"; call: ToolCall }
+  /** Return a provider error response instead of a stream. */
+  | { kind: "error"; status: number; message: string; body?: string }
 
 export type MockProvider = {
   /** Base URL to configure as the provider endpoint. */
@@ -16,6 +18,8 @@ export type MockProvider = {
   calls(): number
   /** The conversation the model was shown, one entry per agent request. */
   transcripts(): Array<Array<Record<string, unknown>>>
+  /** The full request body for each agent request, including the tool list. */
+  requests(): Array<Record<string, unknown>>
   close(): void
 }
 
@@ -43,6 +47,7 @@ function isTitleRequest(messages: Array<Record<string, unknown>>): boolean {
  */
 export function mockProvider(turns: Turn[]): MockProvider {
   const transcripts: Array<Array<Record<string, unknown>>> = []
+  const bodies: Array<Record<string, unknown>> = []
   let index = 0
 
   const server = Bun.serve({
@@ -71,8 +76,19 @@ export function mockProvider(turns: Turn[]): MockProvider {
       }
 
       transcripts.push(messages)
+      bodies.push(body as Record<string, unknown>)
       const turn = turns[Math.min(index, turns.length - 1)]
       index += 1
+
+      if (turn.kind === "error") {
+        return new Response(
+          turn.body ??
+            JSON.stringify({
+              error: { message: turn.message, code: turn.status, type: "rate_limit_exceeded" },
+            }),
+          { status: turn.status, headers: { "content-type": "application/json" } },
+        )
+      }
 
       let sse: string
       if (turn.kind === "text") {
@@ -126,6 +142,7 @@ export function mockProvider(turns: Turn[]): MockProvider {
     baseURL: `http://127.0.0.1:${server.port}/v1`,
     calls: () => index,
     transcripts: () => transcripts,
+    requests: () => bodies,
     close: () => server.stop(true),
   }
 }
