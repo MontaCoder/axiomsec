@@ -442,8 +442,15 @@ export const RunCommand = cmd({
         return false
       }
 
-      const events = await sdk.event.subscribe()
+      const controller = new AbortController()
+      const events = await sdk.event.subscribe(undefined, { signal: controller.signal })
       let error: string | undefined
+      // The session reports `idle` after every step, so the first idle is not
+      // the end of the run: the agent goes idle between a tool call and the
+      // follow-up step that consumes its result. The prompt promise is the
+      // signal that the agent is done, and the final step's events are
+      // published immediately before it resolves.
+      let promptResolved = false
 
       async function loop() {
         const toggles = new Map<string, boolean>()
@@ -542,7 +549,9 @@ export const RunCommand = cmd({
             event.properties.sessionID === sessionID &&
             event.properties.status.type === "idle"
           ) {
-            break
+            // Only an idle that follows the finished prompt ends the stream.
+            if (promptResolved) break
+            continue
           }
 
           if (event.type === "permission.asked") {
@@ -639,30 +648,45 @@ export const RunCommand = cmd({
       }
       await share(sdk, sessionID)
 
-      loop().catch((e) => {
+      const loopPromise = loop().catch((e) => {
         console.error(e)
         process.exit(1)
       })
 
-      if (args.command) {
-        await sdk.session.command({
-          sessionID,
-          agent,
-          model: args.model,
-          command: args.command,
-          arguments: message,
-          variant: args.variant,
-        })
-      } else {
-        const model = args.model ? Provider.parseModel(args.model) : undefined
-        await sdk.session.prompt({
-          sessionID,
-          agent,
-          model,
-          variant: args.variant,
-          parts: [...files, { type: "text", text: message }],
-        })
+      try {
+        if (args.command) {
+          await sdk.session.command({
+            sessionID,
+            agent,
+            model: args.model,
+            command: args.command,
+            arguments: message,
+            variant: args.variant,
+          })
+        } else {
+          const model = args.model ? Provider.parseModel(args.model) : undefined
+          await sdk.session.prompt({
+            sessionID,
+            agent,
+            model,
+            variant: args.variant,
+            parts: [...files, { type: "text", text: message }],
+          })
+        }
+      } finally {
+        promptResolved = true
       }
+
+      // The last step's parts and the terminal idle are published just before
+      // the prompt resolves, so they are already queued behind the events we
+      // consumed. Let the stream deliver them, then close the connection so the
+      // process can exit.
+      await Promise.race([
+        loopPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)).then(() => controller.abort()),
+      ])
+      controller.abort()
+      await loopPromise
     }
 
     if (args.attach) {
