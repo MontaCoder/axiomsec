@@ -100,7 +100,7 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: "finding · no active operation",
               output: "No active operation.",
-              metadata: { action: params.action, active: false },
+              metadata: { action: params.action, active: false, side_effects: Tool.sideEffects("read_only") },
             }
           }
           const active = yield* Effect.promise(() => Operation.read(workspace, slug).catch(() => undefined))
@@ -117,7 +117,9 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               visibleRecords.length === 0
                 ? "No candidate or promoted findings."
                 : [
-                    `total=${visibleRecords.length} reportable=${buckets.reportable.length} suspected=${buckets.suspected.length} rejected=${buckets.rejected.length}`,
+                    `total=${visibleRecords.length} candidates=${buckets.candidates.length} reportable=${buckets.reportable.length} suspected=${buckets.suspected.length} rejected=${buckets.rejected.length}`,
+                    "",
+                    formatListBucket("Candidate Findings", buckets.candidates),
                     "",
                     formatListBucket("Reportable Findings", buckets.reportable),
                     "",
@@ -137,6 +139,7 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
                 reportable_findings: buckets.reportable.length,
                 suspected_findings: buckets.suspected.length,
                 rejected_findings: buckets.rejected.length,
+                side_effects: Tool.sideEffects("read_only"),
               },
             }
           }
@@ -145,7 +148,7 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `finding ${params.action}`,
               output: "Provide key for this action.",
-              metadata: { action: params.action, slug },
+              metadata: { action: params.action, slug, side_effects: Tool.sideEffects("read_only") },
             }
           }
 
@@ -162,7 +165,13 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: `finding · ${params.key}`,
                 output: "No candidate or finding with that key.",
-                metadata: { action: "status", slug, key: params.key, found: false },
+                metadata: {
+                  action: "status",
+                  slug,
+                  key: params.key,
+                  found: false,
+                  side_effects: Tool.sideEffects("read_only"),
+                },
               }
             }
             return {
@@ -178,6 +187,7 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
                 replay_present: record.replay_present,
                 replay_reason: record.replay_reason,
                 replay_exempt: Boolean(record.replay_reason) && !record.replay_present,
+                side_effects: Tool.sideEffects("read_only"),
               },
             }
           }
@@ -187,9 +197,17 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               return {
                 title: `finding reject · ${params.key}`,
                 output: "No candidate or finding with that key.",
-                metadata: { action: "reject", slug, key: params.key, found: false },
+                metadata: { action: "reject", slug, key: params.key, found: false, side_effects: Tool.sideEffects("read_only") },
               }
             }
+            // Rejecting a claim changes the operation record and the report
+            // contents, so it needs a human decision. (SEC-03 / RISK-PERM-07)
+            yield* ctx.ask({
+              permission: "finding",
+              patterns: ["reject"],
+              always: [],
+              metadata: { action: "reject", slug, key: params.key },
+            })
             const eventID = yield* Cyber.appendLedger({
               operation_slug: slug,
               kind: "fact.verified",
@@ -238,7 +256,13 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
             return {
               title: `finding reject · ${params.key}`,
               output: `Rejected ${params.key}.`,
-              metadata: { action: "reject", slug, key: params.key, rejected: true },
+              metadata: {
+                action: "reject",
+                slug,
+                key: params.key,
+                rejected: true,
+                side_effects: Tool.sideEffects("writes_ledger", "writes_facts"),
+              },
             }
           }
 
@@ -263,6 +287,17 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               metadata: { action: "promote", slug, key: params.key, promoted: false, invalid_replay_input: true },
             }
           }
+          // Independent evidence is required. The replay artifact must never double as
+          // evidence, otherwise one model-authored string satisfies both halves of the
+          // proof AND and a finding can self-certify. (SEC-05 / RISK-PROOF-03)
+          if (baseEvidenceRefs.length === 0) {
+            return {
+              title: `finding promote · ${params.key}`,
+              output:
+                "Promotion requires at least one evidence reference that resolves to an artifact in this operation. Replay steps do not count as evidence.",
+              metadata: { action: "promote", slug, key: params.key, promoted: false, missing_evidence: true },
+            }
+          }
           const unresolvedEvidence: string[] = []
           for (const ref of baseEvidenceRefs) {
             const verified = yield* Effect.promise(() => Evidence.verify(workspace, slug, ref).catch(() => false))
@@ -281,6 +316,14 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               },
             }
           }
+          // Promotion mints immutable evidence and marks a claim reportable.
+          // It needs a human decision. (SEC-03 / SEC-05 / RISK-PERM-07)
+          yield* ctx.ask({
+            permission: "finding",
+            patterns: ["promote"],
+            always: [],
+            metadata: { action: "promote", slug, key: params.key },
+          })
           if (params.replay) {
             const replayEntry = yield* Effect.promise(() =>
               Evidence.put(workspace, slug, params.replay!, {
@@ -304,16 +347,8 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
                   }
                 : undefined,
           })
-          const evidenceRefs = [...baseEvidenceRefs, replayRef].filter(
-            (item, index, array): item is string => Boolean(item) && array.indexOf(item) === index,
-          )
-          if (evidenceRefs.length === 0) {
-            return {
-              title: `finding promote · ${params.key}`,
-              output: "Promotion requires at least one evidence reference or a candidate that already carries evidence.",
-              metadata: { action: "promote", slug, key: params.key, promoted: false },
-            }
-          }
+          // The replay artifact is tracked separately: it is not part of the evidence set.
+          const evidenceRefs = baseEvidenceRefs
           const proofVerdict = yield* Oracle.verifyFindingProof({
             operation_slug: slug,
             finding_key: params.key,
@@ -397,13 +432,28 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               src_kind: "finding",
               src_key: params.key,
               relation: "backed_by",
-              dst_kind: replayRef === ref ? "replay_artifact" : "evidence_artifact",
+              dst_kind: "evidence_artifact",
               dst_key: ref,
               writer_kind: "operator",
               status,
               confidence: 1000,
               source_event_id: eventID || undefined,
               evidence_refs: [ref],
+            }).pipe(Effect.catch(() => Effect.succeed("")))
+          }
+          if (replayRef) {
+            yield* Cyber.upsertRelation({
+              operation_slug: slug,
+              src_kind: "finding",
+              src_key: params.key,
+              relation: "backed_by",
+              dst_kind: "replay_artifact",
+              dst_key: replayRef,
+              writer_kind: "operator",
+              status,
+              confidence: 1000,
+              source_event_id: eventID || undefined,
+              evidence_refs: [replayRef],
             }).pipe(Effect.catch(() => Effect.succeed("")))
           }
           if (replayRef) {
@@ -442,6 +492,7 @@ export const FindingTool = Tool.define<typeof parameters, Metadata, never>(
               evidence_refs: evidenceRefs,
               replay_ref: replayRef,
               replay_exemption: replayExemption,
+              side_effects: Tool.sideEffects("writes_ledger", "writes_facts", "writes_evidence"),
             },
           }
         }),

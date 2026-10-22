@@ -197,7 +197,14 @@ export function isRejectedFinding(input: FindingShape) {
   return input.status === "rejected" || input.status === "stale"
 }
 
+/**
+ * A suspected finding is a *promoted* finding that is not reportable and not
+ * rejected. Candidates have their own bucket and must not be counted here,
+ * otherwise a candidate is rendered twice — as a candidate and as a suspected
+ * finding — and the report counts double. (RISK-PROOF-05)
+ */
 export function isSuspectedFinding(input: FindingShape) {
+  if (input.kind !== "finding") return false
   return !isReportableFinding(input) && !isRejectedFinding(input)
 }
 

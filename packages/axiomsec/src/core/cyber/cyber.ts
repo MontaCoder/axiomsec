@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises"
+import { appendFile, mkdir, open, readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { Operation } from "@/core/operation"
 import { Instance } from "@/project/instance"
@@ -14,6 +14,7 @@ import {
   normalizeReplayExemption,
   replayState,
   summarizeFindingFact,
+  type ReplayExemption,
 } from "./finding"
 
 type LedgerKind =
@@ -93,6 +94,7 @@ export interface ProjectedFinding {
   evidence_refs?: string[]
   replay_present?: boolean
   replay_reason?: string
+  replay_exemption?: ReplayExemption
   oracle_status?: string
   oracle_reason?: string
   operator_promoted?: boolean
@@ -490,6 +492,36 @@ async function appendProjectionLine(
   await withFileLock(`cyber:${path.resolve(dir)}:${filename}`, () =>
     appendFile(path.join(dir, filename), JSON.stringify(record) + "\n", "utf8"),
   )
+}
+
+/**
+ * Read the tail of an append-only projection file.
+ *
+ * The projections grow without bound and every reader used to parse the whole
+ * file, so the cost of a single tool call grew with the length of the
+ * operation. Reading the tail keeps the recent records — which are the ones a
+ * projection is a snapshot of — and bounds the work per call.
+ * (RISK-PERF-01)
+ */
+const PROJECTION_TAIL_BYTES = 1_000_000
+
+async function readProjectionTail(file: string): Promise<string> {
+  const info = await stat(file).catch(() => undefined)
+  if (!info) return ""
+  if (info.size <= PROJECTION_TAIL_BYTES) return readFile(file, "utf8").catch(() => "")
+  const handle = await open(file, "r").catch(() => undefined)
+  if (!handle) return ""
+  try {
+    const start = info.size - PROJECTION_TAIL_BYTES
+    const buffer = Buffer.alloc(PROJECTION_TAIL_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, PROJECTION_TAIL_BYTES, start)
+    const text = buffer.subarray(0, bytesRead).toString("utf8")
+    // The first line in the window is probably partial: drop it.
+    const newline = text.indexOf("\n")
+    return newline === -1 ? "" : text.slice(newline + 1)
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
 }
 
 function confidenceLabel(confidence?: number) {
@@ -1256,63 +1288,9 @@ export namespace Cyber {
     if (!operation_slug) return ""
     const project_id = instance.project.id
     const now = Date.now()
-    const existing = yield* Effect.sync(() =>
-      Database.use((db) =>
-        db
-          .select()
-          .from(CyberFactTable)
-          .where(
-            and(
-              eq(CyberFactTable.project_id, project_id),
-              eq(CyberFactTable.operation_slug, operation_slug),
-              eq(CyberFactTable.entity_kind, input.entity_kind),
-              eq(CyberFactTable.entity_key, input.entity_key),
-              eq(CyberFactTable.fact_name, input.fact_name),
-            ),
-          )
-          .get(),
-      ),
-    )
-    if (existing) {
-      yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(CyberFactTable)
-            .set({
-              value_json: input.value_json,
-              writer_kind: input.writer_kind,
-              status: input.status,
-              confidence: input.confidence,
-              source_event_id: input.source_event_id,
-              evidence_refs: input.evidence_refs,
-              expires_at: input.expires_at,
-              time_updated: now,
-            })
-            .where(eq(CyberFactTable.id, existing.id))
-          .run(),
-      ),
-    )
-      yield* Effect.promise(() =>
-        appendProjectionLine(instance.directory, operation_slug, "facts.jsonl", {
-          id: existing.id,
-          project_id,
-          operation_slug,
-          entity_kind: input.entity_kind,
-          entity_key: input.entity_key,
-          fact_name: input.fact_name,
-          value_json: input.value_json,
-          writer_kind: input.writer_kind,
-          status: input.status,
-          confidence: input.confidence,
-          source_event_id: input.source_event_id,
-          evidence_refs: input.evidence_refs,
-          expires_at: input.expires_at,
-          time_created: existing.time_created,
-          time_updated: now,
-        }),
-      ).pipe(Effect.catch(() => Effect.void))
-      return existing.id
-    }
+    // One atomic statement. A SELECT-then-INSERT pair loses the row when two
+    // writers race, and the losing UNIQUE error was swallowed by the caller.
+    // (ENG-02 / RISK-PERSIST-08)
     const fact_id = id("cfct")
     yield* Effect.sync(() =>
       Database.use((db) =>
@@ -1335,12 +1313,49 @@ export namespace Cyber {
             time_created: now,
             time_updated: now,
           })
+          .onConflictDoUpdate({
+            target: [
+              CyberFactTable.project_id,
+              CyberFactTable.operation_slug,
+              CyberFactTable.entity_kind,
+              CyberFactTable.entity_key,
+              CyberFactTable.fact_name,
+            ],
+            set: {
+              value_json: input.value_json,
+              writer_kind: input.writer_kind,
+              status: input.status,
+              confidence: input.confidence,
+              source_event_id: input.source_event_id,
+              evidence_refs: input.evidence_refs,
+              expires_at: input.expires_at,
+              time_updated: now,
+            },
+          })
           .run(),
       ),
     )
+    const stored = yield* Effect.sync(() =>
+      Database.use((db) =>
+        db
+          .select()
+          .from(CyberFactTable)
+          .where(
+            and(
+              eq(CyberFactTable.project_id, project_id),
+              eq(CyberFactTable.operation_slug, operation_slug),
+              eq(CyberFactTable.entity_kind, input.entity_kind),
+              eq(CyberFactTable.entity_key, input.entity_key),
+              eq(CyberFactTable.fact_name, input.fact_name),
+            ),
+          )
+          .get(),
+      ),
+    )
+    const resolvedID = stored?.id ?? fact_id
     yield* Effect.promise(() =>
       appendProjectionLine(instance.directory, operation_slug, "facts.jsonl", {
-        id: fact_id,
+        id: resolvedID,
         project_id,
         operation_slug,
         entity_kind: input.entity_kind,
@@ -1353,11 +1368,11 @@ export namespace Cyber {
         source_event_id: input.source_event_id,
         evidence_refs: input.evidence_refs,
         expires_at: input.expires_at,
-        time_created: now,
+        time_created: stored?.time_created ?? now,
         time_updated: now,
       }),
     ).pipe(Effect.catch(() => Effect.void))
-    return fact_id
+    return resolvedID
   })
 
   export const upsertRelation = Effect.fn("Cyber.upsertRelation")(function* (
@@ -1371,63 +1386,6 @@ export namespace Cyber {
     if (!operation_slug) return ""
     const project_id = instance.project.id
     const now = Date.now()
-    const existing = yield* Effect.sync(() =>
-      Database.use((db) =>
-        db
-          .select()
-          .from(CyberRelationTable)
-          .where(
-            and(
-              eq(CyberRelationTable.project_id, project_id),
-              eq(CyberRelationTable.operation_slug, operation_slug),
-              eq(CyberRelationTable.src_kind, input.src_kind),
-              eq(CyberRelationTable.src_key, input.src_key),
-              eq(CyberRelationTable.relation, input.relation),
-              eq(CyberRelationTable.dst_kind, input.dst_kind),
-              eq(CyberRelationTable.dst_key, input.dst_key),
-            ),
-          )
-          .get(),
-      ),
-    )
-    if (existing) {
-      yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(CyberRelationTable)
-            .set({
-              writer_kind: input.writer_kind,
-              status: input.status,
-              confidence: input.confidence,
-              source_event_id: input.source_event_id,
-              evidence_refs: input.evidence_refs,
-              time_updated: now,
-            })
-            .where(eq(CyberRelationTable.id, existing.id))
-          .run(),
-      ),
-    )
-      yield* Effect.promise(() =>
-        appendProjectionLine(instance.directory, operation_slug, "relations.jsonl", {
-          id: existing.id,
-          project_id,
-          operation_slug,
-          src_kind: input.src_kind,
-          src_key: input.src_key,
-          relation: input.relation,
-          dst_kind: input.dst_kind,
-          dst_key: input.dst_key,
-          writer_kind: input.writer_kind,
-          status: input.status,
-          confidence: input.confidence,
-          source_event_id: input.source_event_id,
-          evidence_refs: input.evidence_refs,
-          time_created: existing.time_created,
-          time_updated: now,
-        }),
-      ).pipe(Effect.catch(() => Effect.void))
-      return existing.id
-    }
     const relation_id = id("crel")
     yield* Effect.sync(() =>
       Database.use((db) =>
@@ -1450,12 +1408,53 @@ export namespace Cyber {
             time_created: now,
             time_updated: now,
           })
+          .onConflictDoUpdate({
+            target: [
+              CyberRelationTable.project_id,
+              CyberRelationTable.operation_slug,
+              CyberRelationTable.src_kind,
+              CyberRelationTable.src_key,
+              CyberRelationTable.relation,
+              CyberRelationTable.dst_kind,
+              CyberRelationTable.dst_key,
+            ],
+            set: {
+              writer_kind: input.writer_kind,
+              status: input.status,
+              confidence: input.confidence,
+              source_event_id: input.source_event_id,
+              evidence_refs: input.evidence_refs,
+              time_updated: now,
+            },
+          })
           .run(),
       ),
     )
+    // On conflict the existing row keeps its original id; resolve it so the
+    // caller and the projection reference the row that actually exists.
+    const stored = yield* Effect.sync(() =>
+      Database.use((db) =>
+        db
+          .select()
+          .from(CyberRelationTable)
+          .where(
+            and(
+              eq(CyberRelationTable.project_id, project_id),
+              eq(CyberRelationTable.operation_slug, operation_slug),
+              eq(CyberRelationTable.src_kind, input.src_kind),
+              eq(CyberRelationTable.src_key, input.src_key),
+              eq(CyberRelationTable.relation, input.relation),
+              eq(CyberRelationTable.dst_kind, input.dst_kind),
+              eq(CyberRelationTable.dst_key, input.dst_key),
+            ),
+          )
+          .get(),
+      ),
+    )
+    const resolvedID = stored?.id ?? relation_id
     yield* Effect.promise(() =>
       appendProjectionLine(instance.directory, operation_slug, "relations.jsonl", {
-        id: relation_id,
+        id: resolvedID,
         project_id,
         operation_slug,
         src_kind: input.src_kind,
@@ -1468,11 +1467,11 @@ export namespace Cyber {
         confidence: input.confidence,
         source_event_id: input.source_event_id,
         evidence_refs: input.evidence_refs,
-        time_created: now,
+        time_created: stored?.time_created ?? now,
         time_updated: now,
       }),
     ).pipe(Effect.catch(() => Effect.void))
-    return relation_id
+    return resolvedID
   })
 
   export const listLedger = Effect.fn("Cyber.listLedger")(function* (input?: {
@@ -1503,7 +1502,7 @@ export namespace Cyber {
     options?: { id_prefix?: string; project_id?: string },
   ): Promise<LedgerEvent[]> {
     const file = path.join(projectionDir(workspace, operation_slug), "ledger.jsonl")
-    const raw = await readFile(file, "utf8").catch(() => "")
+    const raw = await readProjectionTail(file)
     if (!raw) return []
     const latest = new Map<string, Record<string, unknown>>()
     for (const line of raw.split(/\r?\n/)) {
@@ -1567,7 +1566,7 @@ export namespace Cyber {
     options?: { id_prefix?: string; project_id?: string; writer_kind?: string },
   ): Promise<Fact[]> {
     const file = path.join(projectionDir(workspace, operation_slug), "facts.jsonl")
-    const raw = await readFile(file, "utf8").catch(() => "")
+    const raw = await readProjectionTail(file)
     if (!raw) return []
     const latest = new Map<string, Record<string, unknown>>()
     for (const line of raw.split(/\r?\n/)) {
@@ -1799,7 +1798,7 @@ export namespace Cyber {
     options?: { id_prefix?: string; project_id?: string; writer_kind?: string },
   ): Promise<Relation[]> {
     const file = path.join(projectionDir(workspace, operation_slug), "relations.jsonl")
-    const raw = await readFile(file, "utf8").catch(() => "")
+    const raw = await readProjectionTail(file)
     if (!raw) return []
     const latest = new Map<string, Record<string, unknown>>()
     for (const line of raw.split(/\r?\n/)) {
@@ -1921,6 +1920,14 @@ export namespace Cyber {
           evidence_refs: fact.evidence_refs,
           replay_present: Boolean(value?.replay_present),
           replay_reason: typeof value?.replay_reason === "string" ? value.replay_reason : undefined,
+          // The structured exemption must survive projection, otherwise a
+          // legitimately exempt finding is reported as suspected in the
+          // deliverable while the manifest counts it as reportable.
+          // (RISK-PROOF-04)
+          replay_exemption: normalizeReplayExemption({
+            replay_reason: typeof value?.replay_reason === "string" ? value.replay_reason : undefined,
+            replay_exemption: value?.replay_exemption,
+          }),
           oracle_status: typeof value?.oracle_status === "string" ? value.oracle_status : undefined,
           oracle_reason: typeof value?.oracle_reason === "string" ? value.oracle_reason : undefined,
           operator_promoted: Boolean(value?.operator_promoted),
