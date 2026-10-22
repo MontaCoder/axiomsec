@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "0.4.0",
+  "version": "0.4.5",
   "name": "axiomsec",
   "description": "AI agent harness for AppSec and pentest operations",
   "type": "module",

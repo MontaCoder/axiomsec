@@ -5,28 +5,59 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.5] — 2026-10-22
+
+### Security
+
+- MCP tools now use the `mcp` permission instead of a generated `mcp:<key>`
+  key that could not match the default rule. They default to ask, and their
+  denials and failures reach the cyber ledger (`RISK-MCP-01`, `RISK-AUDIT-06`).
+- Per-prompt tool toggles merge with the session ruleset, subagents inherit
+  parent deny rules, and forks retain `parentID` and the permission policy
+  (`RISK-PERM-11`, `RISK-SESSION-02`, `RISK-SESSION-03`).
+- Boundary checks now cover case-insensitive host patterns, every redirect hop,
+  scanner subresources and every planned `appsec_probe` route. WebRTC STUN and
+  WebTransport are disabled in the guarded browser context, and service-worker
+  fetches are covered (`RISK-SCOPE-04/05/06/09/10/11`).
+- Finding promotion rejects blank evidence refs and requires independent
+  evidence; replay artifacts remain separate from proof (`RISK-PROOF-06`).
+- Provider credentials stored in `auth.json` are scrubbed from bash, MCP, PTY
+  and generic child-process environments (`RISK-SECRET-07`).
+- The evidence locker validates manifest extensions on read, rejects hostile
+  extensions and is race-safe under concurrent writes. Vault saves use a
+  temp-file rename (`RISK-PERSIST-10/11`).
+- The tool wrapper records `tool.called` before schema validation, records
+  `tool.error` for malformed calls, redacts persisted input, and no longer
+  claims `audit_logged` when the completion row could not be written.
+- Adapter-backed triage and autonomy now default to ask instead of falling
+  through the catch-all allow rule (`RISK-PERM-09/10`).
 
 ### Fixed
 
-- `axiomsec run` no longer drops the agent's answer after a tool call. The
-  command ended its event loop on the first `idle`, but the session reports
-  `idle` after every step, so the follow-up step that consumed the tool result
-  was never streamed. The exit code was 0 and the output was empty
-  (`RISK-SESSION-01`).
+- `axiomsec run` keeps streaming the agent answer after a tool call and exits
+  non-zero when a session error occurs (`RISK-SESSION-01`).
+- Permanent free-tier quota errors fail fast instead of retrying forever.
+- Port scanning reports bannerless open ports, and service mode sends its
+  active probe instead of silently filtering HTTP listeners (`RISK-SCAN-01`).
+- Config setup no longer installs plugins into every config directory or stalls
+  commands for roughly a minute (`RISK-CONFIG-01`).
+- CLI JSON output goes to stdout, empty session lists emit `[]`, and
+  `debug agent` respects `toolset_exclude` (`RISK-CLI-01/02`, `RISK-TOOL-04`).
+- Evidence files keep their real extension, text previews work, stale locks
+  from dead processes recover immediately, and replay redaction handles inline
+  auth/cookie assignments and tool errors (`RISK-TOOL-05`, `RISK-PERSIST-10`,
+  `RISK-SECRET-06`).
 
 ### Added
 
-- A layered test strategy, documented in `docs/agents/TESTING.md` and
-  implemented in `packages/axiomsec/test/`: a policy layer that turns the
-  invariant greps into assertions, a predicate layer, an integration layer for
-  the evidence locker, a process layer that drives the shipped CLI, and an
-  end-to-end layer that scripts a model so the agent loop is exercised
-  for real. The process and end-to-end layers need the built binary, so CI
-  builds before it runs the suite.
-- A shared test harness (`packages/axiomsec/test/support/`) that gives every
-  case its own workspace, XDG state and database, and a scripted
-  OpenAI-compatible mock provider.
+- A layered 343-test suite in `packages/axiomsec/test/`: policy, predicate,
+  integration, process and end-to-end layers, plus local MCP/plugin fixtures,
+  browser HTTP/WebSocket/WebRTC/service-worker tests and opt-in live-provider
+  acceptance for Groq/Qwen3.8 27B and OpenRouter/Flint.
+- A shared test harness that gives every case its own workspace, XDG state and
+  database, with a scripted OpenAI-compatible mock provider and request capture.
+- Documentation for the test layers, live-provider gates, browser boundary and
+  the updated risk register.
 
 ## [0.4.0] — 2026-10-22
 
@@ -305,7 +336,8 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.5
 [0.4.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.0
 [0.3.1]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.3.1
 [0.3.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.3.0

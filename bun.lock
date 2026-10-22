@@ -22,7 +22,7 @@
     },
     "packages/axiomsec": {
       "name": "axiomsec",
-      "version": "0.4.0",
+      "version": "0.4.5",
       "bin": {
         "axiomsec": "./bin/axiomsec",
       },
@@ -133,7 +133,7 @@
     },
     "packages/plugin": {
       "name": "@axiomsec/plugin",
-      "version": "0.4.0",
+      "version": "0.4.5",
       "dependencies": {
         "@axiomsec/sdk": "workspace:*",
         "effect": "catalog:",
@@ -168,7 +168,7 @@
     },
     "packages/sdk": {
       "name": "@axiomsec/sdk",
-      "version": "0.4.0",
+      "version": "0.4.5",
       "dependencies": {
         "cross-spawn": "catalog:",
       },
@@ -182,7 +182,7 @@
     },
     "packages/shared": {
       "name": "@axiomsec/shared",
-      "version": "0.4.0",
+      "version": "0.4.5",
       "dependencies": {
         "@effect/platform-node": "catalog:",
         "@npmcli/arborist": "catalog:",
