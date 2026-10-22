@@ -47,6 +47,11 @@ playground
 **/__mocks__/
 **/models-snapshot.*
 
+# Tracked regression suite for the security predicates (see docs/agents/VERIFICATION.md).
+# The exclusions above stay for scratch/fixture trees; this one directory is tracked on purpose.
+!packages/axiomsec/test/
+!packages/axiomsec/test/**
+
 # Bench / scratch / generated artifacts
 bench-results-*.json
 **/bench-results-*.json

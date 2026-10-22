@@ -34,6 +34,15 @@ jobs:
       - uses: ./.github/actions/setup-bun
       - run: bun run lint
 
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-bun
+      - run: bun test --timeout 30000
+
   build:
     name: Build
     runs-on: ubuntu-latest
