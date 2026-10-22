@@ -13,7 +13,7 @@ AxiomSec wraps a model with a security workspace instead of a chat box. It keeps
 ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═════╝
 ```
 
-**Version:** 0.3.1 · **License:** AGPL-3.0-or-later · **Runtime:** Bun ≥ 1.3.11 · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md)
+**Version:** 0.4.0 · **License:** AGPL-3.0-or-later · **Runtime:** Bun ≥ 1.3.11 · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md)
 
 ---
 
@@ -314,6 +314,24 @@ export const example: Plugin = async ({ client, project, directory, $ }) => {
     },
   }
 }
+```
+
+A plugin can also contribute tools. They run through the same audit boundary as
+the built-ins — validated arguments, ledger events, workflow progress — and
+should declare the side effects they perform:
+
+```ts
+import { tool } from "@axiomsec/plugin"
+
+export default tool({
+  description: "Look up an internal asset inventory",
+  args: { host: tool.schema.string() },
+  side_effects: ["network"],
+  async execute(args, ctx) {
+    // ctx.ask(...) is available for permissioned actions.
+    return await lookup(args.host)
+  },
+})
 ```
 
 Drive a running headless server from any TypeScript program:
