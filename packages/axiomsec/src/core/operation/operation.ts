@@ -18,10 +18,14 @@ import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from "fs/pr
 import path from "path"
 import { migrate } from "./migration"
 import { parseScope } from "./scope"
+import { containedPath, isValidSlug } from "./slug"
+
+export { isValidSlug }
 import type { Boundary } from "../boundary/schema"
 import { Instance } from "@/project/instance"
 import { Log } from "@/support"
 import { and, Database, desc, eq } from "@/storage"
+import { withFileLock } from "@/support/lock"
 import { CyberFactTable, CyberLedgerTable, CyberRelationTable } from "../cyber/cyber.sql"
 
 const migrationLog = Log.create({ service: "operation.migration" })
@@ -130,6 +134,8 @@ function rootDir(workspace: string) {
 }
 
 export function opDir(workspace: string, slug: string) {
+  // Structural backstop: a slug may never resolve outside `.axiomsec/operation/`.
+  containedPath(rootDir(workspace), slug)
   return path.join(rootDir(workspace), slug)
 }
 
@@ -240,6 +246,85 @@ async function newestMTime(target: string): Promise<number> {
 
 function cyberID(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+type OperationFact = {
+  entity_kind: "operation"
+  entity_key: string
+  fact_name: "operation_state" | "scope_policy" | "autonomy_policy"
+  status: string
+  writer_kind: string
+  time_created: number
+  time_updated: number
+  value_json: Record<string, unknown>
+}
+
+/**
+ * Write operation facts to the canonical cyber kernel and mirror them into the
+ * JSONL projection.
+ *
+ * The database write is the source of truth; the projection is a derived copy
+ * that a reader may fall back to. (ENG-02)
+ */
+async function writeOperationFacts(workspace: string, slug: string, facts: OperationFact[]) {
+  const run = async () => {
+    const projectID = Instance.project.id
+    for (const fact of facts) {
+      const id = cyberID("cfact")
+      Database.use((db) => {
+        db.insert(CyberFactTable)
+          .values({
+            id,
+            project_id: projectID,
+            operation_slug: slug,
+            entity_kind: fact.entity_kind,
+            entity_key: fact.entity_key,
+            fact_name: fact.fact_name,
+            value_json: fact.value_json,
+            writer_kind: fact.writer_kind,
+            status: fact.status,
+            confidence: 1000,
+            source_event_id: null,
+            evidence_refs: null,
+            expires_at: null,
+            time_created: fact.time_created,
+            time_updated: fact.time_updated,
+          })
+          .onConflictDoUpdate({
+            target: [
+              CyberFactTable.project_id,
+              CyberFactTable.operation_slug,
+              CyberFactTable.entity_kind,
+              CyberFactTable.entity_key,
+              CyberFactTable.fact_name,
+            ],
+            set: {
+              value_json: fact.value_json,
+              writer_kind: fact.writer_kind,
+              status: fact.status,
+              confidence: 1000,
+              time_updated: fact.time_updated,
+            },
+          })
+          .run()
+      })
+    }
+  }
+
+  try {
+    await run()
+  } catch {
+    await Instance.provide({ directory: workspace, fn: run })
+  }
+
+  await mkdir(cyberDir(workspace, slug), { recursive: true })
+  await withFileLock(`cyber:${path.resolve(cyberDir(workspace, slug))}:facts.jsonl`, () =>
+    appendFile(
+      cyberFactsFile(workspace, slug),
+      facts.map((fact) => `${JSON.stringify(fact)}\n`).join(""),
+      "utf8",
+    ),
+  )
 }
 
 async function writeInitialCyberKernelState(input: {
@@ -490,6 +575,7 @@ export async function create(input: {
 }
 
 export async function activate(workspace: string, slug: string): Promise<void> {
+  if (!isValidSlug(slug)) throw new Error(`Invalid operation slug: ${JSON.stringify(slug)}`)
   const marker = activeMarker(workspace)
   await mkdir(path.dirname(marker), { recursive: true })
   await writeFile(marker, slug, "utf8")
@@ -506,6 +592,7 @@ export async function activeSlug(workspace: string): Promise<string | undefined>
   if (!existsSync(marker)) return undefined
   const slug = (await readFile(marker, "utf8")).trim()
   if (!slug) return undefined
+  if (!isValidSlug(slug)) return undefined
   if (!existsSync(opDir(workspace, slug))) return undefined
   return slug
 }
@@ -596,8 +683,15 @@ export async function rename(workspace: string, slug: string, label: string): Pr
           .run()
       })
       await mkdir(cyberDir(workspace, slug), { recursive: true })
-      await appendFile(cyberLedgerFile(workspace, slug), `${JSON.stringify(ledger)}\n`, "utf8")
-      await appendFile(cyberFactsFile(workspace, slug), `${JSON.stringify(fact)}\n`, "utf8")
+      // Take the same file lock the cyber kernel uses, so a concurrent
+      // appender cannot interleave a partial line into the projection.
+      // (ENG-07 / RISK-PERSIST-09)
+      await withFileLock(`cyber:${path.resolve(cyberDir(workspace, slug))}:ledger.jsonl`, () =>
+        appendFile(cyberLedgerFile(workspace, slug), `${JSON.stringify(ledger)}\n`, "utf8"),
+      )
+      await withFileLock(`cyber:${path.resolve(cyberDir(workspace, slug))}:facts.jsonl`, () =>
+        appendFile(cyberFactsFile(workspace, slug), `${JSON.stringify(fact)}\n`, "utf8"),
+      )
     },
   })
 
@@ -677,29 +771,10 @@ async function readProjectedOperationFact<T>(
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
     return parse(value as Record<string, unknown>)
   }
-  const file = cyberFactsFile(workspace, slug)
-  if (existsSync(file)) {
-    const raw = await readFile(file, "utf8").catch(() => "")
-    if (raw) {
-      let latest: Record<string, unknown> | undefined
-      for (const line of raw.split(/\r?\n/)) {
-        if (!line.trim()) continue
-        try {
-          const parsed = JSON.parse(line) as Record<string, unknown>
-          if (
-            parsed["entity_kind"] === "operation" &&
-            parsed["entity_key"] === slug &&
-            parsed["fact_name"] === factName
-          ) {
-            latest = parsed
-          }
-        } catch {}
-      }
-      const parsed = parseValue(latest?.["value_json"])
-      if (parsed) return parsed
-    }
-  }
 
+  // The SQLite cyber kernel is canonical. The JSONL projection is a derived
+  // copy, so it is only consulted when the database has no row — for example
+  // for an operation created by an older build. (ENG-02 / RISK-PERSIST-04)
   const query = async () =>
     Database.use((db) =>
       db
@@ -728,7 +803,33 @@ async function readProjectedOperationFact<T>(
     }
   })()
 
-  return parseValue(record?.value_json)
+  const fromDatabase = parseValue(record?.value_json)
+  if (fromDatabase) return fromDatabase
+
+  const file = cyberFactsFile(workspace, slug)
+  if (existsSync(file)) {
+    const raw = await readFile(file, "utf8").catch(() => "")
+    if (raw) {
+      let latest: Record<string, unknown> | undefined
+      for (const line of raw.split(/\r?\n/)) {
+        if (!line.trim()) continue
+        try {
+          const parsed = JSON.parse(line) as Record<string, unknown>
+          if (
+            parsed["entity_kind"] === "operation" &&
+            parsed["entity_key"] === slug &&
+            parsed["fact_name"] === factName
+          ) {
+            latest = parsed
+          }
+        } catch {}
+      }
+      const parsed = parseValue(latest?.["value_json"])
+      if (parsed) return parsed
+    }
+  }
+
+  return undefined
 }
 
 export async function readProjectedState(workspace: string, slug: string): Promise<ProjectedOperationState | undefined> {
@@ -765,6 +866,7 @@ export async function readProjectedAutonomyPolicy(
 export const get = (workspace: string, slug: string) => read(workspace, slug)
 
 export async function read(workspace: string, slug: string): Promise<Info | undefined> {
+  if (!isValidSlug(slug)) return undefined
   const file = opFile(workspace, slug)
   const dir = opDir(workspace, slug)
   if (!existsSync(dir)) return undefined
@@ -1173,7 +1275,7 @@ export async function setOpsec(workspace: string, slug: string, level: Opsec): P
     readProjectedScopePolicy(workspace, slug).catch(() => undefined),
   ])
   const now = Date.now()
-  const operationState = {
+  const operationState: OperationFact = {
     entity_kind: "operation",
     entity_key: slug,
     fact_name: "operation_state",
@@ -1190,7 +1292,7 @@ export async function setOpsec(workspace: string, slug: string, level: Opsec): P
       out_of_scope: projectedState?.out_of_scope ?? scope?.out_of_scope ?? [],
     },
   }
-  const scopePolicy = {
+  const scopePolicy: OperationFact = {
     entity_kind: "operation",
     entity_key: slug,
     fact_name: "scope_policy",
@@ -1206,10 +1308,9 @@ export async function setOpsec(workspace: string, slug: string, level: Opsec): P
     },
   }
   await mkdir(cyberDir(workspace, slug), { recursive: true })
-  await appendFile(
-    cyberFactsFile(workspace, slug),
-    `${JSON.stringify(operationState)}\n${JSON.stringify(scopePolicy)}\n`,
-    "utf8",
-  )
+  // The cyber kernel is canonical: write the facts to SQLite first, then
+  // append the projection copy. Writing only the projection made the
+  // enforcement state depend on a derived file. (ENG-02 / RISK-PERSIST-04)
+  await writeOperationFacts(workspace, slug, [operationState, scopePolicy])
   await touch(workspace, slug)
 }

@@ -89,7 +89,12 @@ export function sideEffects(...categories: SideEffectCategory[]) {
 }
 
 export function resolveOperationSlug(ctx: Context, workspace: string, explicitSlug?: string) {
-  if (explicitSlug) return Effect.succeed(explicitSlug)
+  if (explicitSlug) {
+    // A slug that could escape the operation tree is never resolved. Tools that
+    // accept an explicit slug validate it up front and report the problem.
+    if (!Operation.isValidSlug(explicitSlug)) return Effect.succeed(undefined)
+    return Effect.succeed(explicitSlug)
+  }
   if (ctx.operation?.slug) return Effect.succeed(ctx.operation.slug)
   return Effect.promise(() =>
     OperationResolver.resolveOperation({
@@ -110,7 +115,7 @@ const SECRET_ARG_FIELDS: Record<string, readonly string[]> = {
   identity: ["value"],
 }
 
-function redactToolInput(id: string, args: unknown): unknown {
+export function redactToolInput(id: string, args: unknown): unknown {
   const redacted = redactValue(args, "on")
   const fields = SECRET_ARG_FIELDS[id]
   if (!fields || !redacted || typeof redacted !== "object" || Array.isArray(redacted)) return redacted
@@ -191,7 +196,11 @@ function isOrientationToolCall(id: string, args: unknown) {
 function explicitOperationSlug(args: unknown) {
   const parsed = z.record(z.string(), z.unknown()).safeParse(args)
   if (!parsed.success) return undefined
-  return typeof parsed.data["slug"] === "string" ? parsed.data["slug"] : undefined
+  const slug = parsed.data["slug"]
+  // Only well-formed slugs may reach operation resolution. A malformed slug is
+  // ignored here and rejected loudly by resolveOperationSlug when a tool asks
+  // for it explicitly. (RISK-SCOPE-07)
+  return typeof slug === "string" && Operation.isValidSlug(slug) ? slug : undefined
 }
 
 function refreshDerivedContext(workspace: string, slug?: string) {
@@ -292,7 +301,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
                 },
               })
               .pipe(Effect.catch(() => Effect.void))
-	            if (workflowAware && instance && !isOrientationToolCall(id, args)) {
+	            if (workflowAware && instance && !isOrientationToolCall(id, validatedArgs)) {
 	              const workspace = instance.directory
 	              const slug = operation.slug
               if (slug) {
@@ -355,7 +364,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           }
           const result = exit.value
           const readOnlyResult = isReadOnlyResult(result.metadata)
-          const workflowProgressEligible = workflowAware && !isOrientationToolCall(id, args)
+          const workflowProgressEligible = workflowAware && !isOrientationToolCall(id, validatedArgs)
           let workflowProgressWritten = false
           let contextWritten = false
           yield* Cyber.appendLedger({
@@ -489,4 +498,25 @@ export function init<P extends z.ZodType, M extends Metadata>(info: Info<P, M>):
       id: info.id,
     }
   })
+}
+
+/**
+ * Wrap an externally supplied tool definition (a plugin or a config file tool)
+ * in the same audit boundary the built-ins use.
+ *
+ * Without this a plugin tool would run with no ledger events, no argument
+ * validation, no workflow progress and no context refresh. (ENG-04 / RISK-AUDIT-01)
+ */
+export function wrapDef<P extends z.ZodType, M extends Metadata>(
+  id: string,
+  def: DefWithoutID<P, M>,
+  truncate: Truncate.Interface,
+  agents: Agent.Interface,
+): Effect.Effect<Info<P, M>> {
+  return Object.assign(
+    Effect.gen(function* () {
+      return { id, init: wrap(id, def, truncate, agents) }
+    }),
+    { id },
+  )
 }

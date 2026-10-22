@@ -1,8 +1,12 @@
-import { appendFile, mkdir, readFile, writeFile, stat } from "fs/promises"
+import { appendFile, mkdir, readFile, writeFile, stat, rename } from "fs/promises"
 import { createHash } from "crypto"
 import path from "path"
 import { z } from "zod"
 import { withFileLock } from "@/support/lock"
+import { containedPath } from "../operation/slug"
+import { Log } from "@/support"
+
+const log = Log.create({ service: "evidence" })
 
 export const Entry = z.object({
   sha256: z.string(),
@@ -19,7 +23,12 @@ const MANIFEST = "manifest.jsonl"
 const DIR_NAME = "evidence"
 
 function evidenceDir(workspace: string, slug: string): string {
-  return path.join(workspace, ".axiomsec", "operation", slug, DIR_NAME)
+  // The evidence locker is created on demand, so it is the most dangerous path
+  // primitive in the operation tree: refuse any slug that could land outside
+  // `.axiomsec/operation/`. (SEC-01 / RISK-SCOPE-07)
+  const root = path.join(workspace, ".axiomsec", "operation")
+  const dir = path.join(containedPath(root, slug), DIR_NAME)
+  return dir
 }
 
 function sniffExtFromMime(mime?: string): string {
@@ -39,14 +48,37 @@ function sniffExtFromMime(mime?: string): string {
   return "bin"
 }
 
-async function readManifest(workspace: string, slug: string): Promise<Entry[]> {
+type Manifest = {
+  entries: Entry[]
+  /** Lines that could not be parsed. They are skipped, not fatal. */
+  malformed: number
+}
+
+/**
+ * Read the evidence manifest.
+ *
+ * A single torn or hand-edited line must not brick the whole locker: the
+ * remaining entries stay readable and new evidence can still be written. The
+ * malformed count is surfaced so the damage is visible. (ENG-07 / RISK-PERSIST-05)
+ */
+async function readManifest(workspace: string, slug: string): Promise<Manifest> {
   const p = path.join(evidenceDir(workspace, slug), MANIFEST)
   const raw = await readFile(p, "utf8").catch(() => "")
-  if (!raw) return []
-  return raw
-    .split("\n")
-    .filter((l) => l.trim().length > 0)
-    .map((l) => Entry.parse(JSON.parse(l)))
+  if (!raw) return { entries: [], malformed: 0 }
+  const entries: Entry[] = []
+  let malformed = 0
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    try {
+      entries.push(Entry.parse(JSON.parse(line)))
+    } catch {
+      malformed += 1
+    }
+  }
+  if (malformed > 0) {
+    log.warn("evidence manifest has malformed lines", { slug, malformed, manifest: p })
+  }
+  return { entries, malformed }
 }
 
 function lockKey(workspace: string, slug: string) {
@@ -54,12 +86,12 @@ function lockKey(workspace: string, slug: string) {
 }
 
 export async function list(workspace: string, slug: string): Promise<Entry[]> {
-  return withFileLock(lockKey(workspace, slug), () => readManifest(workspace, slug))
+  return withFileLock(lockKey(workspace, slug), async () => (await readManifest(workspace, slug)).entries)
 }
 
 export async function get(workspace: string, slug: string, sha256: string): Promise<{ entry: Entry; bytes: Uint8Array } | undefined> {
   return withFileLock(lockKey(workspace, slug), async () => {
-    const entries = await readManifest(workspace, slug)
+    const { entries } = await readManifest(workspace, slug)
     const entry = entries.find((e) => e.sha256 === sha256)
     if (!entry) return undefined
     const p = path.join(evidenceDir(workspace, slug), `${entry.sha256}.${entry.ext}`)
@@ -97,11 +129,15 @@ export async function put(
 
   const existing = await stat(file).catch(() => undefined)
   if (!existing) {
-    await writeFile(file, bytes)
+    // Write to a temp file and rename: a crash must not leave a truncated
+    // artifact under a digest that says it is complete. (SEC-04 / RISK-PERSIST-05)
+    const tmp = path.join(dir, `.${sha256}.${ext}.tmp`)
+    await writeFile(tmp, bytes)
+    await rename(tmp, file)
   }
 
   return withFileLock(lockKey(workspace, slug), async () => {
-    const current = await readManifest(workspace, slug)
+    const { entries: current } = await readManifest(workspace, slug)
     const existing = current.find((e) => e.sha256 === sha256)
     if (existing) return existing
     const entry: Entry = {

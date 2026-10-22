@@ -2,6 +2,7 @@ import { createHash } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
 import { Operation } from "@/core/operation"
+import { containedPath } from "@/core/operation/slug"
 import type { OperationInfo } from "@/core/operation"
 import { Plan } from "@/core/plan"
 import { Observation } from "@/core/observation"
@@ -166,6 +167,7 @@ function renderReport(
       }
       lines.push("")
     }
+    renderFindingBucket("Candidate Findings", buckets.candidates)
     renderFindingBucket("Reportable Findings", buckets.reportable)
     renderFindingBucket("Suspected Findings", buckets.suspected)
     renderFindingBucket("Rejected Or Stale Findings", buckets.rejected)
@@ -464,10 +466,7 @@ export async function build(
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-")
   const bundleDir = path.join(
-    workspace,
-    ".axiomsec",
-    "operation",
-    slug,
+    containedPath(path.join(workspace, ".axiomsec", "operation"), slug),
     "deliverable",
     `bundle-${stamp}`,
   )

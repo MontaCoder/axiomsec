@@ -37,6 +37,19 @@ export const WorkspaceTool = Tool.define<typeof parameters, Metadata, Session.Se
         Effect.gen(function* () {
           const workspace = Instance.directory
 
+          // A slug is a directory name directly under `.axiomsec/operation/`.
+          // Refuse anything that could resolve outside it before it reaches a
+          // path primitive. (SEC-01 / RISK-SCOPE-07)
+          if (params.slug !== undefined && !Operation.isValidSlug(params.slug)) {
+            return {
+              title: "workspace",
+              output:
+                `Invalid operation slug: ${JSON.stringify(params.slug)}. ` +
+                "A slug must be a single directory name under .axiomsec/operation/ (letters, digits, dot, dash, underscore).",
+              metadata: { action: params.action, invalid_slug: true, side_effects: Tool.sideEffects("read_only") },
+            }
+          }
+
           if (params.action === "start") {
             if (!params.label || !params.kind) {
               return {
