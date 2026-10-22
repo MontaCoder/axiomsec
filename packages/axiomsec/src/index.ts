@@ -28,8 +28,6 @@ import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { OperationCommand } from "./cli/cmd/operation"
 import { DbCommand } from "./cli/cmd/db"
-import path from "path"
-import { Global } from "./globals"
 import { JsonMigration } from "./storage"
 import { Database } from "./storage"
 import { errorMessage } from "./support/error"
@@ -108,8 +106,13 @@ const cli = yargs(args)
       args: process.argv.slice(2),
     })
 
-    const marker = path.join(Global.Path.data, "axiomsec.db")
-    if (!(await Filesystem.exists(marker))) {
+    // The JSON -> SQLite migration only needs to run once, and only when the
+    // SQLite database does not exist yet. The marker is the resolved database
+    // path: a hardcoded `Global.Path.data/axiomsec.db` missed the channel
+    // suffix and `AXIOMSEC_DB`, so the migration re-ran on every command.
+    // (RISK-PERSIST-06)
+    const marker = Database.Path
+    if (marker !== ":memory:" && !(await Filesystem.exists(marker))) {
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import { existsSync } from "node:fs"
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import * as Tool from "./tool"
 import DESCRIPTION from "./share.txt"
@@ -252,6 +252,11 @@ export async function run(input: {
 
   const size = (await stat(tarballPath)).size
   const tarSha = await sha256OfFile(tarballPath)
+
+  // The staging tree is a full copy of the operation. Leaving it behind makes
+  // every share grow the operation directory without bound.
+  // (RISK-PERSIST-07)
+  await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined)
 
   let signed = false
   let warning = deliverableWarning

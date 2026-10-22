@@ -26,6 +26,12 @@ describe("permission evaluation order", () => {
     expect(Wildcard.match("net", "net")).toBe(true)
     expect(Wildcard.match("net", "networks")).toBe(false)
   })
+
+  test("matching does not depend on the platform (RISK-PERM-08)", () => {
+    // Permission keys are identifiers: "Net" must not match the "net" rule.
+    expect(Wildcard.match("Net", "net")).toBe(false)
+    expect(Wildcard.match("net", "Net")).toBe(false)
+  })
 })
 
 describe("stored approvals versus explicit denies (RISK-PERM-07)", () => {

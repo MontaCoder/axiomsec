@@ -14,7 +14,11 @@ export function match(str: string, pattern: string) {
     escaped = escaped.slice(0, -3) + "( .*)?"
   }
 
-  const flags = process.platform === "win32" ? "si" : "s"
+  // Permission keys and patterns are identifiers, not filesystem paths: they
+  // must resolve the same way on every platform. The previous Windows-only
+  // case-insensitive flag meant an operator rule behaved differently on
+  // Windows than on the platforms CI runs. (RISK-PERM-08)
+  const flags = "s"
   return new RegExp("^" + escaped + "$", flags).test(str)
 }
 
