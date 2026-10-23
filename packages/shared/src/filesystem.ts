@@ -8,9 +8,9 @@ import type { PlatformError } from "effect/PlatformError"
 import { Glob } from "./util/glob"
 
 export namespace AppFileSystem {
-  export class FileSystemError extends Schema.TaggedErrorClass<FileSystemError>()("FileSystemError", {
+  export class FileSystemError extends Schema.TaggedError<FileSystemError>()("FileSystemError", {
     method: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   }) {}
 
   export type Error = PlatformError | FileSystemError
@@ -32,7 +32,7 @@ export namespace AppFileSystem {
     readonly findUp: (target: string, start: string, stop?: string) => Effect.Effect<string[], Error>
     readonly up: (options: { targets: string[]; start: string; stop?: string }) => Effect.Effect<string[], Error>
     readonly globUp: (pattern: string, start: string, stop?: string) => Effect.Effect<string[], Error>
-    readonly glob: (pattern: string, options?: Glob.Options) => Effect.Effect<string[], Error>
+    readonly globFiles: (pattern: string, options?: Glob.Options) => Effect.Effect<string[], Error>
     readonly globMatch: (pattern: string, filepath: string) => boolean
   }
 
@@ -107,7 +107,7 @@ export namespace AppFileSystem {
         if (mode) yield* fs.chmod(path, mode)
       })
 
-      const glob = Effect.fn("FileSystem.glob")(function* (pattern: string, options?: Glob.Options) {
+      const globFiles = Effect.fn("FileSystem.globFiles")(function* (pattern: string, options?: Glob.Options) {
         return yield* Effect.tryPromise({
           try: () => Glob.scan(pattern, options),
           catch: (cause) => new FileSystemError({ method: "glob", cause }),
@@ -148,7 +148,7 @@ export namespace AppFileSystem {
         const result: string[] = []
         let current = start
         while (true) {
-          const matches = yield* glob(pattern, { cwd: current, absolute: true, include: "file", dot: true }).pipe(
+          const matches = yield* globFiles(pattern, { cwd: current, absolute: true, include: "file", dot: true }).pipe(
             Effect.catch(() => Effect.succeed([] as string[])),
           )
           result.push(...matches)
@@ -173,7 +173,7 @@ export namespace AppFileSystem {
         findUp,
         up,
         globUp,
-        glob,
+        globFiles,
         globMatch: Glob.match,
       })
     }),

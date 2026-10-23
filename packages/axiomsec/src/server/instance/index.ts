@@ -42,7 +42,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
     .route("/permission", PermissionRoutes())
 
   if (Flag.AXIOMSEC_EXPERIMENTAL_HTTPAPI) {
-    const handler = ExperimentalHttpApiServer.webHandler().handler
+    const handler = ExperimentalHttpApiServer.webHandler().handler as (request: Request) => Promise<Response>
     app
       .all("/question", (c) => handler(c.req.raw))
       .all("/question/*", (c) => handler(c.req.raw))

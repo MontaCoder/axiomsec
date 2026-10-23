@@ -14,15 +14,15 @@ import * as Scope from "effect/Scope"
 import * as Cause from "effect/Cause"
 import * as Sink from "effect/Sink"
 import * as Stream from "effect/Stream"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
+import * as ChildProcess from "effect/process/ChildProcess"
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner"
 import {
   ChildProcessSpawner,
   ExitCode,
   make as makeSpawner,
   makeHandle,
   ProcessId,
-} from "effect/unstable/process/ChildProcessSpawner"
+} from "effect/process/ChildProcessSpawner"
 import * as NodeChildProcess from "node:child_process"
 import * as NodeFs from "node:fs"
 import * as NodeFsPromises from "node:fs/promises"

@@ -1,4 +1,4 @@
-import type { McpServer } from "@agentclientprotocol/sdk"
+import type { McpServer } from "@agentclientprotocol/sdk/unstable"
 import type { AxiomSecClient } from "@axiomsec/sdk/v2"
 import type { ProviderID, ModelID } from "../providers/schema"
 

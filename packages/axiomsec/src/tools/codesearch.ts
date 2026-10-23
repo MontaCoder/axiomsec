@@ -1,6 +1,6 @@
 import z from "zod"
 import { Effect } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient } from "effect/http"
 import * as Tool from "./tool"
 import * as McpExa from "./mcp-exa"
 import DESCRIPTION from "./codesearch.txt"

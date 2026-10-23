@@ -1,6 +1,6 @@
 import { ProviderAuth } from "@/providers"
 import { Effect, Layer } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const root = "/provider"
 

@@ -61,7 +61,7 @@ export const UpgradeCommand = {
       (err) => err,
     )
     if (err) {
-      spinner.stop("Upgrade failed", 1)
+      spinner.error("Upgrade failed")
       if (err instanceof Installation.UpgradeFailedError) {
         // necessary because choco only allows install/upgrade in elevated terminals
         if (method === "choco" && err.stderr.includes("not running from an elevated command shell")) {

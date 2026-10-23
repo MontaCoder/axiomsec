@@ -100,7 +100,7 @@ export namespace Question {
     Rejected: BusEvent.define("question.rejected", zod(Rejected)),
   }
 
-  export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("QuestionRejectedError", {}) {
+  export class RejectedError extends Schema.TaggedError<RejectedError>()("QuestionRejectedError", {}) {
     override get message() {
       return "The user dismissed this question"
     }

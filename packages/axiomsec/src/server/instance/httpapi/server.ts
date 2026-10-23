@@ -1,6 +1,7 @@
 import { Effect, Layer, Redacted, Schema } from "effect"
-import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/unstable/httpapi"
-import { HttpRouter, HttpServer, HttpServerRequest } from "effect/unstable/http"
+import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/http-api"
+import { HttpRouter, HttpServer, HttpServerRequest } from "effect/http"
+import { OtlpExporter } from "effect/observability"
 import { AppRuntime } from "@/effect/app-runtime"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { Observability } from "@/effect"
@@ -33,7 +34,7 @@ export namespace ExperimentalHttpApiServer {
     }
   }
 
-  class Unauthorized extends Schema.TaggedErrorClass<Unauthorized>()(
+  class Unauthorized extends Schema.TaggedError<Unauthorized>()(
     "Unauthorized",
     { message: Schema.String },
     { httpApiStatus: 401 },
@@ -100,6 +101,7 @@ export namespace ExperimentalHttpApiServer {
     Layer.provide(instance),
     Layer.provide(HttpServer.layerServices),
     Layer.provideMerge(Observability.layer),
+    Layer.provide(OtlpExporter.layerFlusher),
   )
 
   export const webHandler = lazy(() =>

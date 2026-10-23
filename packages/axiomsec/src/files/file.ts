@@ -564,7 +564,12 @@ export const layer = Layer.effect(
             context: Infinity,
             ignoreWhitespace: true,
           })
-          return { type: "text" as const, content, patch, diff: formatPatch(patch) }
+          return {
+            type: "text" as const,
+            content,
+            patch: { ...patch, oldFileName: patch.oldFileName ?? file, newFileName: patch.newFileName ?? file },
+            diff: formatPatch(patch),
+          }
         }
         return { type: "text" as const, content }
       }

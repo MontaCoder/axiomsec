@@ -27,7 +27,7 @@ import { Skill } from "../skills"
 import { Effect, Context, Layer } from "effect"
 import { InstanceState } from "@/effect"
 import * as Option from "effect/Option"
-import * as OtelTracer from "@effect/opentelemetry/Tracer"
+import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
 import { isSelectableAgent, isSwitchableAgent } from "./switching"
 
 export namespace Agent {

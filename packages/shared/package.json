@@ -24,9 +24,9 @@
     "@effect/platform-node": "catalog:",
     "@npmcli/arborist": "catalog:",
     "effect": "catalog:",
-    "glob": "13.0.5",
+    "glob": "13.0.6",
     "mime-types": "3.0.2",
-    "minimatch": "10.2.5",
+    "minimatch": "10.2.6",
     "semver": "catalog:",
     "xdg-basedir": "5.1.0",
     "zod": "catalog:"

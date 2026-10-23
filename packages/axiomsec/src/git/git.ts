@@ -1,6 +1,6 @@
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { Effect, Layer, Context, Stream } from "effect"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 
 const cfg = [
   "--no-optional-locks",

@@ -1,7 +1,7 @@
 import { Log } from "@/support"
 import { bootstrap } from "../bootstrap"
 import { cmd } from "./cmd"
-import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
+import { ndJsonStream } from "@agentclientprotocol/sdk/unstable"
 import { ACP } from "@/acp/agent"
 import { Server } from "@/server/server"
 import { createAxiomSecClient } from "@axiomsec/sdk/v2"
@@ -53,11 +53,7 @@ export const AcpCommand = cmd({
       })
 
       const stream = ndJsonStream(input, output)
-      const agent = await ACP.init({ sdk })
-
-      new AgentSideConnection((conn) => {
-        return agent.create(conn, { sdk })
-      }, stream)
+      ACP.create({ sdk }).connect(stream)
 
       log.info("setup connection")
       process.stdin.resume()

@@ -7,9 +7,9 @@ import { Global } from "./global"
 import { EffectFlock } from "./util/effect-flock"
 
 export namespace Npm {
-  export class InstallFailedError extends Schema.TaggedErrorClass<InstallFailedError>()("NpmInstallFailedError", {
+  export class InstallFailedError extends Schema.TaggedError<InstallFailedError>()("NpmInstallFailedError", {
     pkg: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   }) {}
 
   export interface EntryPoint {

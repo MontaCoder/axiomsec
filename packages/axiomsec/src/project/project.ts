@@ -9,7 +9,7 @@ import { GlobalBus } from "@/events/global"
 import { which } from "../support/which"
 import { ProjectID } from "./schema"
 import { Effect, Layer, Path, Scope, Context, Stream } from "effect"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { NodePath } from "@effect/platform-node"
 import { AppFileSystem } from "@axiomsec/shared/filesystem"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -327,7 +327,7 @@ export const layer: Layer.Layer<
       if (input.icon?.url) return
 
       const matches = yield* fs
-        .glob("**/favicon.{ico,png,svg,jpg,jpeg,webp}", {
+        .globFiles("**/favicon.{ico,png,svg,jpg,jpeg,webp}", {
           cwd: input.worktree,
           absolute: true,
           include: "file",

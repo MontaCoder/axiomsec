@@ -1,6 +1,6 @@
 import { Effect, Layer, Logger } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
-import { OtlpLogger, OtlpSerialization } from "effect/unstable/observability"
+import { FetchHttpClient } from "effect/http"
+import { OtlpExporter, OtlpLogger, OtlpSerialization } from "effect/observability"
 import * as EffectLogger from "./logger"
 import { Flag } from "@/flags/flag"
 import { InstallationChannel, InstallationVersion } from "@/installer/version"
@@ -38,7 +38,11 @@ const logs = Logger.layer(
     }),
   ],
   { mergeWithExisting: false },
-).pipe(Layer.provide(OtlpSerialization.layerJson), Layer.provide(FetchHttpClient.layer))
+).pipe(
+  Layer.provide(OtlpSerialization.layerJson),
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(OtlpExporter.layerFlusher),
+)
 
 const traces = async () => {
   const NodeSdk = await import("@effect/opentelemetry/NodeSdk")

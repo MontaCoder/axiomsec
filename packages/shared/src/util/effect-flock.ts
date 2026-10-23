@@ -13,17 +13,17 @@ export namespace EffectFlock {
   // Errors
   // ---------------------------------------------------------------------------
 
-  export class LockTimeoutError extends Schema.TaggedErrorClass<LockTimeoutError>()("LockTimeoutError", {
+  export class LockTimeoutError extends Schema.TaggedError<LockTimeoutError>()("LockTimeoutError", {
     key: Schema.String,
   }) {}
 
-  export class LockCompromisedError extends Schema.TaggedErrorClass<LockCompromisedError>()("LockCompromisedError", {
+  export class LockCompromisedError extends Schema.TaggedError<LockCompromisedError>()("LockCompromisedError", {
     detail: Schema.String,
   }) {}
 
-  class ReleaseError extends Schema.TaggedErrorClass<ReleaseError>()("ReleaseError", {
+  class ReleaseError extends Schema.TaggedError<ReleaseError>()("ReleaseError", {
     detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   }) {
     override get message() {
       return this.detail
@@ -31,7 +31,7 @@ export namespace EffectFlock {
   }
 
   /** Internal: signals "lock is held, retry later". Never leaks to callers. */
-  class NotAcquired extends Schema.TaggedErrorClass<NotAcquired>()("NotAcquired", {}) {}
+  class NotAcquired extends Schema.TaggedError<NotAcquired>()("NotAcquired", {}) {}
 
   export type LockError = LockTimeoutError | LockCompromisedError
 
@@ -45,8 +45,7 @@ export namespace EffectFlock {
   const MAX_DELAY_MS = 2_000
   const HEARTBEAT_MS = Math.max(100, Math.floor(STALE_MS / 3))
 
-  const retrySchedule = Schedule.exponential(BASE_DELAY_MS, 1.7).pipe(
-    Schedule.either(Schedule.spaced(MAX_DELAY_MS)),
+  const retrySchedule = Schedule.min([Schedule.exponential(BASE_DELAY_MS, 1.7), Schedule.spaced(MAX_DELAY_MS)]).pipe(
     Schedule.jittered,
     Schedule.while((meta) => meta.elapsed < TIMEOUT_MS),
   )
@@ -165,7 +164,7 @@ export namespace EffectFlock {
 
       type Handle = { token: string; metaPath: string; heartbeatPath: string; lockDir: string }
 
-      const tryAcquireLockDir = Effect.fn("EffectFlock.tryAcquire")(function* (lockDir: string) {
+      const acquireOnce = Effect.fn("EffectFlock.tryAcquire")(function* (lockDir: string) {
         const token = randomUUID()
         const metaPath = path.join(lockDir, "meta.json")
         const heartbeatPath = path.join(lockDir, "heartbeat")
@@ -209,6 +208,8 @@ export namespace EffectFlock {
 
         return { token, metaPath, heartbeatPath, lockDir } satisfies Handle
       })
+      const tryAcquireLockDir = (lockDir: string): Effect.Effect<Handle, NotAcquired | LockCompromisedError> =>
+        acquireOnce(lockDir)
 
       // -- retry wrapper (preserves Handle type) --
 

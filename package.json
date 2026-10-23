@@ -16,29 +16,29 @@
       "packages/*"
     ],
     "catalog": {
-      "@effect/opentelemetry": "4.0.0-beta.48",
-      "@effect/platform-node": "4.0.0-beta.48",
+      "@effect/opentelemetry": "4.0.6",
+      "@effect/platform-node": "4.0.6",
       "@npmcli/arborist": "9.4.0",
       "@types/bun": "1.4.4",
       "@types/cross-spawn": "6.0.6",
-      "ulid": "3.0.1",
+      "ulid": "3.0.2",
       "@types/node": "22.20.5",
       "@types/semver": "7.8.0",
       "@tsconfig/node22": "22.0.6",
       "@tsconfig/bun": "1.0.11",
-      "diff": "8.0.4",
+      "diff": "9.0.0",
       "drizzle-kit": "1.0.0-beta.19-d95b7a4",
       "drizzle-orm": "1.0.0-beta.19-d95b7a4",
-      "effect": "4.0.0-beta.48",
+      "effect": "4.0.6",
       "ai": "6.0.168",
       "cross-spawn": "7.0.6",
       "hono": "4.13.13",
-      "hono-openapi": "1.1.2",
+      "hono-openapi": "1.5.0",
       "fuzzysort": "3.1.0",
-      "semver": "7.7.4",
+      "semver": "7.8.5",
       "typescript": "7.0.2",
-      "zod": "4.1.8",
-      "remeda": "2.26.0",
+      "zod": "4.6.7",
+      "remeda": "2.53.0",
       "tailwindcss": "4.1.11",
       "solid-js": "1.9.17"
     }
@@ -49,7 +49,7 @@
     "oxlint": "1.89.0",
     "oxlint-tsgolint": "7.0.2005",
     "prettier": "3.9.10",
-    "bun-pty": "0.4.8"
+    "bun-pty": "0.5.1"
   },
   "repository": {
     "type": "git",
@@ -78,8 +78,5 @@
   "trustedDependencies": [
     "bun-pty",
     "esbuild"
-  ],
-  "patchedDependencies": {
-    "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch"
-  }
+  ]
 }

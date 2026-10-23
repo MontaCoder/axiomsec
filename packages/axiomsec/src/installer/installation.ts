@@ -1,8 +1,8 @@
 import { Effect, Layer, Schema, Context, Stream } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { withTransientReadRetry } from "@/support/effect-http-client"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import path from "path"
 import z from "zod"
 import { BusEvent } from "@/events/bus-event"
@@ -64,7 +64,7 @@ export function isLocal() {
   return InstallationChannel === "local"
 }
 
-export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedError>()("UpgradeFailedError", {
+export class UpgradeFailedError extends Schema.TaggedError<UpgradeFailedError>()("UpgradeFailedError", {
   stderr: Schema.String,
 }) {}
 

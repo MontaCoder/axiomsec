@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Guard, ScopeDeniedError } from "@/core/boundary"
 import type * as Tool from "./tool"
 

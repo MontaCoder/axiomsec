@@ -88,7 +88,7 @@ const MIGRATIONS: Migration[] = [
   Effect.fn("Storage.migration.1")(function* (dir: string, fs: AppFileSystem.Interface, git: Git.Interface) {
     const project = path.resolve(dir, "../project")
     if (!(yield* fs.isDir(project))) return
-    const projectDirs = yield* fs.glob("*", {
+    const projectDirs = yield* fs.globFiles("*", {
       cwd: project,
       include: "all",
     })
@@ -100,11 +100,11 @@ const MIGRATIONS: Migration[] = [
       let worktree = "/"
 
       if (projectID !== "global") {
-        for (const msgFile of yield* fs.glob("storage/session/message/*/*.json", {
+        for (const msgFile of yield* fs.globFiles("storage/session/message/*/*.json", {
           cwd: full,
           absolute: true,
         })) {
-          const json = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "preserve" })
+          const json = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "ignore" })
           const root = Option.isSome(json) ? json.value.path?.root : undefined
           if (!root) continue
           worktree = root
@@ -142,18 +142,18 @@ const MIGRATIONS: Migration[] = [
         )
 
         log.info(`migrating sessions for project ${projectID}`)
-        for (const sessionFile of yield* fs.glob("storage/session/info/*.json", {
+        for (const sessionFile of yield* fs.globFiles("storage/session/info/*.json", {
           cwd: full,
           absolute: true,
         })) {
           const dest = path.join(dir, "session", projectID, path.basename(sessionFile))
           log.info("copying", { sessionFile, dest })
           const session = yield* fs.readJson(sessionFile)
-          const info = decodeSession(session, { onExcessProperty: "preserve" })
+          const info = decodeSession(session, { onExcessProperty: "ignore" })
           yield* fs.writeWithDirs(dest, JSON.stringify(session, null, 2))
           if (Option.isNone(info)) continue
           log.info(`migrating messages for session ${info.value.id}`)
-          for (const msgFile of yield* fs.glob(`storage/session/message/${info.value.id}/*.json`, {
+          for (const msgFile of yield* fs.globFiles(`storage/session/message/${info.value.id}/*.json`, {
             cwd: full,
             absolute: true,
           })) {
@@ -163,12 +163,12 @@ const MIGRATIONS: Migration[] = [
               dest: next,
             })
             const message = yield* fs.readJson(msgFile)
-            const item = decodeMessage(message, { onExcessProperty: "preserve" })
+            const item = decodeMessage(message, { onExcessProperty: "ignore" })
             yield* fs.writeWithDirs(next, JSON.stringify(message, null, 2))
             if (Option.isNone(item)) continue
 
             log.info(`migrating parts for message ${item.value.id}`)
-            for (const partFile of yield* fs.glob(`storage/session/part/${info.value.id}/${item.value.id}/*.json`, {
+            for (const partFile of yield* fs.globFiles(`storage/session/part/${info.value.id}/${item.value.id}/*.json`, {
               cwd: full,
               absolute: true,
             })) {
@@ -186,12 +186,12 @@ const MIGRATIONS: Migration[] = [
     }
   }),
   Effect.fn("Storage.migration.2")(function* (dir: string, fs: AppFileSystem.Interface) {
-    for (const item of yield* fs.glob("session/*/*.json", {
+    for (const item of yield* fs.globFiles("session/*/*.json", {
       cwd: dir,
       absolute: true,
     })) {
       const raw = yield* fs.readJson(item)
-      const session = decodeSummary(raw, { onExcessProperty: "preserve" })
+      const session = decodeSummary(raw, { onExcessProperty: "ignore" })
       if (Option.isNone(session)) continue
       const diffs = session.value.summary.diffs
       yield* fs.writeWithDirs(
@@ -308,7 +308,7 @@ export const layer = Layer.effect(
       const dir = (yield* state).dir
       const cwd = path.join(dir, ...prefix)
       const result = yield* fs
-        .glob("**/*", {
+        .globFiles("**/*", {
           cwd,
           include: "file",
         })

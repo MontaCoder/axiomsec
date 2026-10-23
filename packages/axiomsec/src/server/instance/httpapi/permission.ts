@@ -1,7 +1,7 @@
 import { Permission } from "@/permissions"
 import { PermissionID } from "@/permissions/schema"
 import { Effect, Layer, Schema } from "effect"
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
 
 const root = "/permission"
 

@@ -18,7 +18,7 @@ import { Auth } from "@/auth"
 import { Installation } from "@/installer"
 import { InstallationVersion } from "@/installer/version"
 import * as Option from "effect/Option"
-import * as OtelTracer from "@effect/opentelemetry/Tracer"
+import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })

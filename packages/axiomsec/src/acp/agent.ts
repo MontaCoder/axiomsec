@@ -1,7 +1,8 @@
 import {
   RequestError,
-  type Agent as ACPAgent,
-  type AgentSideConnection,
+  agent as acpAgent,
+  methods,
+  type AgentContext,
   type AuthenticateRequest,
   type AuthMethod,
   type CancelNotification,
@@ -12,15 +13,18 @@ import {
   type ListSessionsRequest,
   type ListSessionsResponse,
   type LoadSessionRequest,
+  type McpServer,
   type NewSessionRequest,
   type PermissionOption,
   type PlanEntry,
   type PromptRequest,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
   type ResumeSessionRequest,
   type ResumeSessionResponse,
   type Role,
   type SessionInfo,
-  type SetSessionModelRequest,
+  type SessionNotification,
   type SessionConfigOption,
   type SetSessionConfigOptionRequest,
   type SetSessionConfigOptionResponse,
@@ -29,7 +33,9 @@ import {
   type ToolCallContent,
   type ToolKind,
   type Usage,
-} from "@agentclientprotocol/sdk"
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
+} from "@agentclientprotocol/sdk/unstable"
 
 import { Log } from "../support"
 import { pathToFileURL } from "url"
@@ -56,6 +62,28 @@ type ModelOption = { modelId: string; name: string }
 
 const DEFAULT_VARIANT_VALUE = "default"
 
+interface Connection {
+  sessionUpdate(params: SessionNotification): Promise<void>
+  requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>
+  writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse>
+}
+
+class ACPConnection implements Connection {
+  constructor(private readonly client: AgentContext) {}
+
+  sessionUpdate(params: SessionNotification) {
+    return this.client.notify(methods.client.session.update, params)
+  }
+
+  requestPermission(params: RequestPermissionRequest) {
+    return this.client.request(methods.client.session.requestPermission, params)
+  }
+
+  writeTextFile(params: WriteTextFileRequest) {
+    return this.client.request(methods.client.fs.writeTextFile, params)
+  }
+}
+
 export namespace ACP {
   const log = Log.create({ service: "acp-agent" })
 
@@ -79,7 +107,7 @@ export namespace ACP {
   }
 
   async function sendUsageUpdate(
-    connection: AgentSideConnection,
+    connection: Connection,
     sdk: AxiomSecClient,
     sessionID: string,
     directory: string,
@@ -128,16 +156,33 @@ export namespace ACP {
       })
   }
 
-  export async function init({ sdk: _sdk }: { sdk: AxiomSecClient }) {
-    return {
-      create: (connection: AgentSideConnection, fullConfig: ACPConfig) => {
-        return new Agent(connection, fullConfig)
-      },
+  export function create(config: ACPConfig) {
+    let active: Agent | undefined
+    const current = () => {
+      if (!active) throw new Error("ACP connection is not initialized")
+      return active
     }
+    return acpAgent({ name: "axiomsec" })
+      .onConnect((connection) => {
+        active = new Agent(new ACPConnection(connection.client), config)
+      })
+      .onRequest(methods.agent.initialize, ({ params }) => current().initialize(params))
+      .onRequest(methods.agent.authenticate, ({ params }) => current().authenticate(params))
+      .onRequest(methods.agent.session.new, ({ params }) => current().newSession(params))
+      .onRequest(methods.agent.session.load, ({ params }) => current().loadSession(params))
+      .onRequest(methods.agent.session.list, ({ params }) => current().listSessions(params))
+      .onRequest(methods.agent.session.fork, ({ params }) => current().forkSession(params))
+      .onRequest(methods.agent.session.resume, ({ params }) => current().resumeSession(params))
+      .onRequest(methods.agent.session.setMode, ({ params }) => current().setSessionMode(params))
+      .onRequest(methods.agent.session.setConfigOption, ({ params }) =>
+        current().setSessionConfigOption(params),
+      )
+      .onRequest(methods.agent.session.prompt, ({ params }) => current().prompt(params))
+      .onNotification(methods.agent.session.cancel, ({ params }) => current().cancel(params))
   }
 
-  export class Agent implements ACPAgent {
-    private connection: AgentSideConnection
+  export class Agent {
+    private connection: Connection
     private config: ACPConfig
     private sdk: AxiomSecClient
     private sessionManager: ACPSessionManager
@@ -152,7 +197,7 @@ export namespace ACP {
       { optionId: "reject", kind: "reject_once", name: "Reject" },
     ]
 
-    constructor(connection: AgentSideConnection, config: ACPConfig) {
+    constructor(connection: Connection, config: ACPConfig) {
       this.connection = connection
       this.config = config
       this.sdk = config.sdk
@@ -730,7 +775,7 @@ export namespace ACP {
       }
     }
 
-    async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
+    async forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
       const directory = params.cwd
       const mcpServers = params.mcpServers ?? []
 
@@ -795,7 +840,7 @@ export namespace ACP {
       }
     }
 
-    async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
       const directory = params.cwd
       const sessionId = params.sessionId
       const mcpServers = params.mcpServers ?? []
@@ -1215,7 +1260,7 @@ export namespace ACP {
 
       const mcpServers: Record<string, Config.Mcp> = {}
       for (const server of params.mcpServers) {
-        if ("type" in server) {
+        if ("type" in server && (server.type === "http" || server.type === "sse")) {
           mcpServers[server.name] = {
             url: server.url,
             headers: server.headers.reduce<Record<string, string>>((acc, { name, value }) => {
@@ -1224,11 +1269,14 @@ export namespace ACP {
             }, {}),
             type: "remote",
           }
+        } else if ("type" in server && server.type === "acp") {
+          log.warn("skipping ACP transport MCP server", { name: server.name })
         } else {
+          const stdio = server as Extract<McpServer, { command: string }>
           mcpServers[server.name] = {
             type: "local",
-            command: [server.command, ...server.args],
-            environment: server.env.reduce<Record<string, string>>((acc, { name, value }) => {
+            command: [stdio.command, ...stdio.args],
+            environment: stdio.env.reduce<Record<string, string>>((acc, { name, value }) => {
               acc[name] = value
               return acc
             }, {}),
@@ -1278,28 +1326,6 @@ export namespace ACP {
         _meta: buildVariantMeta({
           model,
           variant: this.sessionManager.getVariant(sessionId),
-          availableVariants,
-        }),
-      }
-    }
-
-    async unstable_setSessionModel(params: SetSessionModelRequest) {
-      const session = this.sessionManager.get(params.sessionId)
-      const providers = await this.sdk.config
-        .providers({ directory: session.cwd }, { throwOnError: true })
-        .then((x) => x.data!.providers)
-
-      const selection = parseModelSelection(params.modelId, providers)
-      this.sessionManager.setModel(session.id, selection.model)
-      this.sessionManager.setVariant(session.id, selection.variant)
-
-      const entries = sortProvidersByName(providers)
-      const availableVariants = modelVariantsFromProviders(entries, selection.model)
-
-      return {
-        _meta: buildVariantMeta({
-          model: selection.model,
-          variant: selection.variant,
           availableVariants,
         }),
       }

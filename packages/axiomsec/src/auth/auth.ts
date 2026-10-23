@@ -35,9 +35,9 @@ const _Info = Schema.Union([Oauth, Api, WellKnown]).annotate({ discriminator: "t
 export const Info = Object.assign(_Info, { zod: zod(_Info) })
 export type Info = Schema.Schema.Type<typeof _Info>
 
-export class AuthError extends Schema.TaggedErrorClass<AuthError>()("AuthError", {
+export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
   message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 export interface Interface {

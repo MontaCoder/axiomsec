@@ -1,4 +1,4 @@
-import { RequestError, type McpServer } from "@agentclientprotocol/sdk"
+import { RequestError, type McpServer } from "@agentclientprotocol/sdk/unstable"
 import type { ACPSessionState } from "./types"
 import { Log } from "@/support"
 import type { AxiomSecClient } from "@axiomsec/sdk/v2"

@@ -1,6 +1,6 @@
 import z from "zod"
 import { Effect } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import * as Tool from "./tool"
 import * as GuardedHttp from "./guarded-http"
 import TurndownService from "turndown"

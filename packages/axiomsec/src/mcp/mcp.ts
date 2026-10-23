@@ -28,7 +28,7 @@ import open from "open"
 import { Effect, Exit, Layer, Option, Context, Stream } from "effect"
 import { EffectBridge } from "@/effect"
 import { InstanceState } from "@/effect"
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 
 const log = Log.create({ service: "mcp" })

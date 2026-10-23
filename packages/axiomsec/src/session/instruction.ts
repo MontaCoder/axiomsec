@@ -1,7 +1,7 @@
 import os from "os"
 import path from "path"
 import { Effect, Layer, Context } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { Config } from "@/config"
 import { InstanceState } from "@/effect"
 import { Flag } from "@/flags/flag"
@@ -162,7 +162,7 @@ export namespace Instruction {
               const instruction = raw.startsWith("~/") ? path.join(os.homedir(), raw.slice(2)) : raw
               const matches = yield* (
                 path.isAbsolute(instruction)
-                  ? fs.glob(path.basename(instruction), {
+                  ? fs.globFiles(path.basename(instruction), {
                       cwd: path.dirname(instruction),
                       absolute: true,
                       include: "file",
