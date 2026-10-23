@@ -34,7 +34,7 @@ replace, the manual `V-S*` TUI scenarios.
 | TUI idle CPU | 127 % | **107 %** | **-16.0 %** |
 | TUI peak RSS | 624.1 MB | **522.6 MB** | **-16.3 %** |
 | Installed `node_modules` | 1,641 MB | **573 MB** | **-65.1 %** |
-| `bun.lock` | 2,016 lines / 936 resolved | 1,802 lines / 617 installed | **-10.6 % lines** |
+| `bun.lock` | 2,016 lines / 936 resolved | 1,773 lines / 609 installed | **-12.1 % lines** |
 | Typecheck (uncached) | 3.9 s | 3.3 s | -15 % |
 | Lint | 3.1 s / 0 errors | 3.2 s / 0 errors | ~flat (964 warnings) |
 | Test suite | 343 tests / 226.7 s | 343 tests / 217 s | -4.3 % |
