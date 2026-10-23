@@ -4,6 +4,7 @@ import path from "path"
 
 const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
 const rootPkg = await Bun.file(rootPkgPath).json()
+const appPkg = await Bun.file(path.resolve(import.meta.dir, "../../../packages/axiomsec/package.json")).json()
 const expectedBunVersion = rootPkg.packageManager?.split("@")[1]
 
 if (!expectedBunVersion) {
@@ -32,14 +33,12 @@ const IS_PREVIEW = CHANNEL !== "latest"
 
 const VERSION = await (async () => {
   if (env.AXIOMSEC_VERSION) return env.AXIOMSEC_VERSION
-  if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
-  const version = await fetch("https://registry.npmjs.org/axiomsec/latest")
-    .then((res) => {
-      if (!res.ok) throw new Error(res.statusText)
-      return res.json()
-    })
-    .then((data: any) => data.version)
-    .catch(() => "0.1.0")
+  if (IS_PREVIEW) {
+    const epoch = process.env.SOURCE_DATE_EPOCH
+    const now = epoch ? new Date(Number(epoch) * 1000) : new Date()
+    return `0.0.0-${CHANNEL}-${now.toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
+  }
+  const version = appPkg.version as string
   const [major, minor, patch] = version.split(".").map((x: string) => Number(x) || 0)
   const t = env.AXIOMSEC_BUMP?.toLowerCase()
   if (t === "major") return `${major + 1}.0.0`

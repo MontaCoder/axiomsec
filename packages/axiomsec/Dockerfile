@@ -1,10 +1,10 @@
-FROM alpine AS base
+FROM alpine:3.22 AS base
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
-RUN apk add libgcc libstdc++ ripgrep chromium nss freetype harfbuzz ca-certificates ttf-freefont
+RUN apk add --no-cache libgcc libstdc++ ripgrep chromium nss freetype harfbuzz ca-certificates ttf-freefont
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser

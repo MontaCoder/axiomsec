@@ -50,7 +50,7 @@ export const AuthMiddleware: MiddlewareHandler = (c, next) => {
 export const LoggerMiddleware: MiddlewareHandler = async (c, next) => {
   const skip = c.req.path === "/log"
   if (!skip) {
-    log.info("request", {
+    log.debug("request", {
       method: c.req.method,
       path: c.req.path,
     })

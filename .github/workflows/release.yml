@@ -46,16 +46,13 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-bun
       - run: bun typecheck
-      - run: bun run build --single --skip-install
+      - name: Build
+        run: bun run build --single --skip-install
         working-directory: packages/axiomsec
-      - name: Test if present
-        working-directory: packages/axiomsec
-        run: |
-          if find . -path './node_modules' -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.spec.ts' -o -name '*.spec.tsx' \) -print -quit | grep -q .; then
-            bun test --timeout 30000
-          else
-            echo "No tests are shipped in this lite repo; skipping bun test."
-          fi
+        env:
+          AXIOMSEC_VERSION: ${{ needs.version.outputs.version }}
+          AXIOMSEC_CHANNEL: latest
+      - run: bun test --timeout 60000
 
   startup-smoke:
     name: Startup Smoke (${{ matrix.os }})

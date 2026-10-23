@@ -11,50 +11,35 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   HUSKY: "0"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  typecheck:
-    name: Typecheck
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-bun
-      - run: bun typecheck
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-bun
+      - name: Dependency audit
+        run: |
+          bun audit --json > audit.json
+          bun -e 'const data = await Bun.file("audit.json").json(); if (Object.keys(data).length) { console.error(JSON.stringify(data, null, 2)); process.exit(1) }'
+
+      - run: bun typecheck
       - run: bun run lint
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-bun
       # The integration and end-to-end layers drive the real binary, so it has
       # to exist before the suite runs. Building here also means a broken
       # build fails the gate instead of silently skipping those layers.
       - name: Build for the integration layers
         run: bun run build --single --skip-install
         working-directory: packages/axiomsec
-      - run: bun test --timeout 60000
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-bun
-      - run: bun run build --single --skip-install
-        working-directory: packages/axiomsec
+      - run: bun test --timeout 60000
