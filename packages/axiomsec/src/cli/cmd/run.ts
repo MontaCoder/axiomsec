@@ -26,7 +26,20 @@ import { SkillTool } from "../../tools/skill"
 import { BashTool } from "../../tools/bash"
 import { TodoWriteTool } from "../../tools/todo"
 import { Locale } from "../../support"
+import { errorMessage } from "../../support/error"
+import { isRecord } from "../../support/record"
 import { AppRuntime } from "@/effect/app-runtime"
+
+/**
+ * Named errors carry their human-readable text in `data.message`; the base
+ * Error message is only the error name.
+ */
+function promptErrorText(error: unknown): string {
+  if (isRecord(error) && isRecord(error.data) && typeof error.data.message === "string") {
+    return error.data.message
+  }
+  return errorMessage(error)
+}
 
 type ToolProps<T> = {
   input: Tool.InferParameters<T>
@@ -658,7 +671,7 @@ export const RunCommand = cmd({
 
       try {
         if (args.command) {
-          await sdk.session.command({
+          const result = await sdk.session.command({
             sessionID,
             agent,
             model: args.model,
@@ -666,16 +679,32 @@ export const RunCommand = cmd({
             arguments: message,
             variant: args.variant,
           })
+          if (result.error) throw result.error
         } else {
           const model = args.model ? Provider.parseModel(args.model) : undefined
-          await sdk.session.prompt({
+          const result = await sdk.session.prompt({
             sessionID,
             agent,
             model,
             variant: args.variant,
             parts: [...files, { type: "text", text: message }],
           })
+          if (result.error) throw result.error
         }
+      } catch (e) {
+        // A rejected prompt (unknown session, provider/model resolution, bad
+        // request) must end the run with a non-zero status. Leaving it
+        // unhandled let the process exit 0 after printing a raw rejection.
+        const message = promptErrorText(e)
+        // A failure raised inside the session loop already arrived as a
+        // session.error event; do not report the same text twice.
+        if (error?.includes(message) !== true) {
+          error = error ? error + EOL + message : message
+          if (!emit("error", { error: { name: e instanceof Error ? e.name : "Error", data: { message } } })) {
+            UI.error(message)
+          }
+        }
+        controller.abort()
       } finally {
         promptResolved = true
       }

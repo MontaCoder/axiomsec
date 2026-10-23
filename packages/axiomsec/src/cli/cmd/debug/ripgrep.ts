@@ -57,14 +57,13 @@ const FilesCommand = cmd({
               cwd: Instance.directory,
               glob: args.glob ? [args.glob] : undefined,
             })
-            .pipe(
-              Stream.take(args.limit ?? Infinity),
-              Stream.runCollect,
-              Effect.map((c) => [...c]),
-            )
+            .pipe(Stream.runCollect, Effect.map((c) => [...c]))
         }),
       )
-      process.stdout.write(files.join(EOL) + EOL)
+      const query = args.query?.toLowerCase()
+      const filtered = query ? files.filter((file) => file.toLowerCase().includes(query)) : files
+      const limited = args.limit === undefined ? filtered : filtered.slice(0, args.limit)
+      process.stdout.write(limited.join(EOL) + EOL)
     })
   },
 })

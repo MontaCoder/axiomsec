@@ -815,11 +815,17 @@ export const SessionRoutes = lazy(() =>
       ),
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        // Validate before committing to a 200 stream. A missing session used to
+        // reject inside the already-started stream, which reached the client as
+        // an unhandled rejection instead of the 404 the API documents.
+        await AppRuntime.runPromise(
+          Session.Service.use((svc) => svc.get(sessionID)),
+        )
         c.status(200)
         c.header("Content-Type", "application/json")
         return stream(c, async (stream) => {
-          const sessionID = c.req.valid("param").sessionID
-          const body = c.req.valid("json")
           const msg = await AppRuntime.runPromise(
             SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
           )
