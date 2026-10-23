@@ -9,6 +9,7 @@ import { useKeybind } from "../context/keybind"
 import { useTheme } from "../context/theme"
 import { useSDK } from "../context/sdk"
 import { Flag } from "@/flags/flag"
+import type { JSX } from "@opentui/solid"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { Keybind } from "@/support"
 import { createDebouncedSignal } from "../util/signal"
@@ -69,7 +70,7 @@ export function DialogSessionList() {
           workspaceStatus = project.workspace.status(x.workspaceID) || "error"
         }
 
-        let footer = ""
+        let footer: JSX.Element = ""
         if (Flag.AXIOMSEC_EXPERIMENTAL_WORKSPACES) {
           if (x.workspaceID) {
             let desc = "unknown"

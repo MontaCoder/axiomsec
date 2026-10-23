@@ -1,9 +1,9 @@
-import { Show } from "solid-js"
+import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { useTheme } from "../context/theme"
 import { useKV } from "../context/kv"
 import type { JSX } from "@opentui/solid"
-import type { RGBA } from "@opentui/core"
-import "opentui-spinner/solid"
+import type { ColorInput, RGBA } from "@opentui/core"
+import type { ColorGenerator } from "../ui/spinner"
 
 /**
  * The lifecycle phase the spinner is signalling. Each phase gets its own
@@ -66,6 +66,28 @@ export function spinnerFramesFor(phase?: SpinnerPhase) {
   return PHASE_FRAMES[phase ?? "default"]
 }
 
+export function SpinnerGlyph(props: { frames: string[]; interval: number; color: RGBA | ColorGenerator }) {
+  const [index, setIndex] = createSignal(0)
+  createEffect(() => {
+    setIndex(0)
+    const timer = setInterval(
+      () => setIndex((value) => (value + 1) % Math.max(1, props.frames.length)),
+      props.interval,
+    )
+    onCleanup(() => clearInterval(timer))
+  })
+  const chars = () => Array.from(props.frames[index()] ?? "")
+  const colorAt = (charIndex: number): ColorInput =>
+    typeof props.color === "function" ? props.color(index(), charIndex, props.frames.length, chars().length) : props.color
+  return (
+    <box flexDirection="row">
+      {chars().map((char, charIndex) => (
+        <text fg={colorAt(charIndex)}>{char}</text>
+      ))}
+    </box>
+  )
+}
+
 export function Spinner(props: { children?: JSX.Element; color?: RGBA; phase?: SpinnerPhase }) {
   const { theme } = useTheme()
   const kv = useKV()
@@ -74,7 +96,7 @@ export function Spinner(props: { children?: JSX.Element; color?: RGBA; phase?: S
   return (
     <Show when={kv.get("animations_enabled", true)} fallback={<text fg={color()}>⋯ {props.children}</text>}>
       <box flexDirection="row" gap={1}>
-        <spinner frames={def().frames} interval={def().interval} color={color()} />
+        <SpinnerGlyph frames={def().frames} interval={def().interval} color={color()} />
         <Show when={props.children}>
           <text fg={color()}>{props.children}</text>
         </Show>

@@ -1,4 +1,4 @@
-import { CliRenderEvents, SyntaxStyle, RGBA, type TerminalColors } from "@opentui/core"
+import { CliRenderEvents, SyntaxStyle, RGBA, type NativeResourceOwner, type TerminalColors } from "@opentui/core"
 import path from "path"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createSimpleContext } from "./helper"
@@ -373,8 +373,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       renderer.setBackgroundColor(values().background)
     })
 
-    const syntax = createMemo(() => generateSyntax(values()))
-    const subtleSyntax = createMemo(() => generateSubtleSyntax(values()))
+    const syntax = createMemo(() => generateSyntax(values(), renderer.nativeScene))
+    const subtleSyntax = createMemo(() => generateSubtleSyntax(values(), renderer.nativeScene))
 
     return {
       theme: new Proxy(values(), {
@@ -651,11 +651,11 @@ function generateMutedTextColor(bg: RGBA, isDark: boolean): RGBA {
   return RGBA.fromInts(grayValue, grayValue, grayValue)
 }
 
-function generateSyntax(theme: Theme) {
-  return SyntaxStyle.fromTheme(getSyntaxRules(theme))
+function generateSyntax(theme: Theme, owner: NativeResourceOwner) {
+  return SyntaxStyle.fromTheme(getSyntaxRules(theme), owner)
 }
 
-function generateSubtleSyntax(theme: Theme) {
+function generateSubtleSyntax(theme: Theme, owner: NativeResourceOwner) {
   const rules = getSyntaxRules(theme)
   return SyntaxStyle.fromTheme(
     rules.map((rule) => {
@@ -676,6 +676,7 @@ function generateSubtleSyntax(theme: Theme) {
       }
       return rule
     }),
+    owner,
   )
 }
 
