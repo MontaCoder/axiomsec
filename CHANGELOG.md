@@ -5,6 +5,16 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-10-23
+
+### Fixed
+
+- Linux single-target builds no longer require OpenTUI 0.6's unused musl and
+  foreign-OS native packages. The build now externalizes every non-target
+  `@opentui/core-*` variant while bundling the target's native library.
+- Release builds install all native variants again so glibc, musl, macOS and
+  Windows targets are all built from the same tree.
+
 ## [0.5.0] — 2026-10-23
 
 ### Performance
@@ -394,7 +404,8 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.1
 [0.5.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.0
 [0.4.5]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.5
 [0.4.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.0

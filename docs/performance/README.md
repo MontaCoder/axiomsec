@@ -135,7 +135,7 @@ behavior.
 - **Reproducible builds:** two builds with the same
   `AXIOMSEC_VERSION`, `AXIOMSEC_CHANNEL` and `SOURCE_DATE_EPOCH` produced
   byte-identical binaries (SHA-256
-  `903309b8bebda9b2ab73bb397c8eaa07b02c1e22cedfe56cd87dd88b4da4670e`).
+  `b303da28a69341e9d77d4e34aabfcf8446c5dcfffa43fd9596976fdf66841568`).
   Builds are offline by default: the bundled models.dev snapshot is reused
   unless `bun run --cwd packages/axiomsec models:refresh` is run explicitly.
 - **Pinned versions:** every direct dependency is exact; `bunfig.toml` uses

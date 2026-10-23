@@ -178,11 +178,31 @@ for (const item of targets) {
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
   const workerRelativePath = path.relative(dir, parserWorker).replaceAll("\\", "/")
 
+  // OpenTUI statically imports every platform binary; keep only the target's
+  // native package so cross-builds do not require unrelated libc/OS variants.
+  const nativePackage = `@opentui/core-${item.os}-${item.arch}${item.abi === "musl" ? "-musl" : ""}`
+  const openTuiPackages = [
+    "@opentui/core-darwin-x64",
+    "@opentui/core-darwin-arm64",
+    "@opentui/core-linux-x64",
+    "@opentui/core-linux-arm64",
+    "@opentui/core-linux-x64-musl",
+    "@opentui/core-linux-arm64-musl",
+    "@opentui/core-win32-x64",
+    "@opentui/core-win32-arm64",
+  ]
+
   await Bun.build({
     conditions: ["browser"],
     tsconfig: "./tsconfig.json",
     plugins: [plugin],
-    external: ["node-gyp", "electron", "chromium-bidi", "chromium-bidi/*"],
+    external: [
+      "node-gyp",
+      "electron",
+      "chromium-bidi",
+      "chromium-bidi/*",
+      ...openTuiPackages.filter((entry) => entry !== nativePackage),
+    ],
     format: "esm",
     minify: true,
     splitting: true,
