@@ -30,7 +30,7 @@
       "drizzle-kit": "1.0.0-beta.22",
       "drizzle-orm": "1.0.0-beta.22",
       "effect": "4.0.6",
-      "ai": "7.0.150",
+      "ai": "7.0.151",
       "cross-spawn": "7.0.6",
       "hono": "4.13.13",
       "hono-openapi": "1.5.0",
@@ -80,6 +80,9 @@
     "esbuild"
   ],
   "overrides": {
-    "@openrouter/ai-sdk-provider": "3.1.0"
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "@ai-sdk/provider": "4.0.33",
+    "@ai-sdk/provider-utils": "5.0.67",
+    "@ai-sdk/gateway": "4.0.124"
   }
 }

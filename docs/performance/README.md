@@ -33,13 +33,13 @@ replace, the manual `V-S*` TUI scenarios.
 | TUI input → painted text | 34.0 ms | **24.5 ms** | **-27.9 %** |
 | TUI idle CPU | 127 % | **107 %** | **-16.0 %** |
 | TUI peak RSS | 624.1 MB | **522.6 MB** | **-16.3 %** |
-| Installed `node_modules` | 1,641 MB | **572 MB** | **-65.1 %** |
+| Installed `node_modules` | 1,641 MB | **573 MB** | **-65.1 %** |
 | `bun.lock` | 2,016 lines / 936 resolved | 1,802 lines / 617 installed | **-10.6 % lines** |
 | Typecheck (uncached) | 3.9 s | 3.3 s | -15 % |
 | Lint | 3.1 s / 0 errors | 3.2 s / 0 errors | ~flat (964 warnings) |
 | Test suite | 343 tests / 226.7 s | 343 tests / 217 s | -4.3 % |
 | Single-platform build | 3.0 s | **2.6 s** | **-12.5 %** |
-| Compiled binary | 134.4 MB | 142.6 MB | **+6.1 %** |
+| Compiled binary | 134.4 MB | 142.5 MB | **+6.0 %** |
 | Audit | 58 findings in the intermediate tree (2 critical) | **0 findings / 609 packages** | **clean** |
 
 The 8 MB binary growth is a deliberate tradeoff: OpenTUI 0.6's new renderer
@@ -133,7 +133,7 @@ behavior.
 - **Reproducible builds:** two builds with the same
   `AXIOMSEC_VERSION`, `AXIOMSEC_CHANNEL` and `SOURCE_DATE_EPOCH` produced
   byte-identical binaries (SHA-256
-  `ae25952f98c1937700019e8960cd1163dee489fa5daa30ba016c8efbce6d8010`).
+  `903309b8bebda9b2ab73bb397c8eaa07b02c1e22cedfe56cd87dd88b4da4670e`).
   Builds are offline by default: the bundled models.dev snapshot is reused
   unless `bun run --cwd packages/axiomsec models:refresh` is run explicitly.
 - **Pinned versions:** every direct dependency is exact; `bunfig.toml` uses

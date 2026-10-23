@@ -28,10 +28,10 @@
     "peakRssMb": 522.63
   },
   "sizes": {
-    "binaryMb": 142.58,
-    "distMb": 142.58,
-    "installedMb": 572.18,
-    "lockfileLines": 1787,
+    "binaryMb": 142.5,
+    "distMb": 142.5,
+    "installedMb": 572.8,
+    "lockfileLines": 1773,
     "binarySha256": "7fecb8804d300a180835d98979991f9f19df2b272e869d96d65c379839b7e338"
   },
   "method": "median of 3 full runs; each TUI metric is the median of 3 PTY probes"
