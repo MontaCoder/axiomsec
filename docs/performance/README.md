@@ -42,7 +42,9 @@ replace, the manual `V-S*` TUI scenarios.
 | Compiled binary | 134.4 MB | 142.5 MB | **+6.0 %** |
 | Audit | 58 findings in the intermediate tree (2 critical) | **0 findings / 609 packages** | **clean** |
 
-The 8 MB binary growth is a deliberate tradeoff: OpenTUI 0.6's new renderer
+The 8 MB binary growth is an accepted tradeoff (2026-10-23, operator decision);
+keeping the mandated OpenTUI 0.6 and AI SDK 7 upgrades and all provider/browser
+functionality takes precedence over raw binary size. OpenTUI 0.6's new renderer
 and native core are larger, while the install tree shrank by 1.07 GB. The
 growth is confined to the compiled binary; install, lockfile and container
 layers all got smaller.
