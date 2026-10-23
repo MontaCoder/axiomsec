@@ -34,11 +34,34 @@
     "serverPid": 4996
   },
   "tui": {
-    "firstDataMs": 9.6,
-    "firstFrameMs": 9.6,
-    "inputToNextFrameMs": 392.45,
-    "outputBytes": 713,
-    "peakRssMb": 295.38
+    "firstDataMs": 17.48,
+    "firstFrameMs": 17.48,
+    "inputToNextFrameMs": 17.92,
+    "outputBytes": 133486,
+    "peakRssMb": 578.51,
+    "samples": [
+      {
+        "firstDataMs": 17.81,
+        "firstFrameMs": 17.81,
+        "inputToNextFrameMs": 25.56,
+        "outputBytes": 133486,
+        "peakRssMb": 587.79
+      },
+      {
+        "firstDataMs": 8.72,
+        "firstFrameMs": 8.72,
+        "inputToNextFrameMs": 1.6,
+        "outputBytes": 133756,
+        "peakRssMb": 578.51
+      },
+      {
+        "firstDataMs": 17.48,
+        "firstFrameMs": 17.48,
+        "inputToNextFrameMs": 17.92,
+        "outputBytes": 129550,
+        "peakRssMb": 565.09
+      }
+    ]
   },
   "sizes": {
     "binaryMb": 134.38,

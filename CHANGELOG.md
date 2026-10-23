@@ -5,6 +5,63 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-10-23
+
+### Performance
+
+- `--version` cold start fell from 389 ms to 29 ms by answering it before
+  loading the CLI graph; the full entry now loads as a dynamic chunk.
+- Server listen 550 → 447 ms, server RSS 162 → 136 MB, loopback throughput
+  2,337 → 2,470 req/s, and TUI first paint 17.5 → 9.2 ms.
+- TUI input latency under the deterministic PTY probe rose from 18 to 69 ms
+  because OpenTUI 0.6 adds a hardcoded 20 ms stdin disambiguation timer. This
+  is the one metric that regressed; it is recorded as `RISK-TUI-01`.
+- Install tree 1,641 → 570 MB, lockfile 2,016 → 1,803 lines, and the CI job
+  graph was collapsed from four installs plus a duplicate build to one
+  validated job.
+
+### Changed
+
+- Bun 1.4.4, TypeScript 7.0.2 (native), oxlint 1.89, Prettier 3.9.10; Turbo
+  and the native-preview toolchain removed.
+- Effect 4.0.6 stable, OpenTUI 0.6.8, Solid 1.9.17, AI SDK 7 with provider
+  majors 3/4/5, ACP SDK 2.0.1, Zod 4.6.7, OTel 1.10/0.300/2.12, Hono OpenAPI
+  1.5.0, Clack 1.8.1, Drizzle 1.0.0-beta.22.
+- Native APIs replace dependencies: `Bun.which`, `Bun.stripANSI`,
+  `z.toJSONSchema`.
+- Builds are byte-reproducible with `AXIOMSEC_VERSION`, `AXIOMSEC_CHANNEL` and
+  `SOURCE_DATE_EPOCH`; a `latest` build no longer fetches the npm registry.
+- CI runs `bun audit` before the gates and fails on any advisory.
+
+### Breaking
+
+- ACP 2 removes the legacy connection classes. `session/set_model` is gone from
+  ACP v1; use `session/set_config_option` with `configId: "model"`. Fork and
+  resume remain supported via the v1 `/unstable` entrypoint.
+- AI SDK 7 uses the v4 provider specification. The bundled Copilot provider
+  remains v3 (accepted by AI SDK 7); system messages are passed explicitly via
+  `allowSystemInMessages`.
+- The internal `AppFileSystem.glob` was renamed `globFiles` to avoid colliding
+  with Effect 4's `FileSystem.glob`.
+- `opentui-spinner` was replaced by a local `SpinnerGlyph`; the TUI spinner
+  phases and animation settings are unchanged.
+
+### Removed
+
+- Both Bun patches, the `pkg.pr.new` SolidStart canary, unused catalog
+  entries (router/meta, Kobalte, Tailwind, virtual list, Shiki, Marked, Vite,
+  Playwright test runner, luxon, dompurify, remend, worker types),
+  `opentui-spinner`, `which`, `strip-ansi`, `zod-to-json-schema` and `gray-matter`.
+- Turbo, `@typescript/native-preview`, and `@effect/language-service`.
+
+### Security
+
+- `bun audit` is clean (617 packages); the intermediate upgrade tree had 58
+  findings, including two critical tar advisories, which `bun audit fix` and
+  provider alignment resolved.
+- OpenRouter is aligned to v3 across the app and the optional gateway provider,
+  removing a nested AI SDK 6 / provider-utils 4 graph.
+
 ## [0.4.5] — 2026-10-22
 
 ### Security
@@ -336,7 +393,8 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.0
 [0.4.5]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.5
 [0.4.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.0
 [0.3.1]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.3.1

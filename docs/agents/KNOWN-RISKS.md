@@ -859,12 +859,36 @@ names the test that must go red if the fix is reverted.
 
 ### RISK-CI-01 — CI lacks tests, format, and security checks
 
-**Status:** fixed 2026-10-22 (tests) · **Severity:** low · **Verified:** 2026-10-22
+**Status:** fixed 2026-10-23 · **Severity:** low · **Verified:** 2026-10-23
 **Evidence (pre-fix):** `.github/workflows/ci.yml` ran typecheck, lint, and a single-platform build only.
-**Fix:** CI now builds the binary before a dedicated `bun test --timeout 60000` job, so the integration and end-to-end layers run against a real artifact instead of silently skipping. Typecheck, lint, and the build smoke test remain separate jobs.
-**Residual:** no dependency audit, no OS matrix, and Prettier remains intentionally unenforced; browser and live-provider tests skip when Chromium or keys are absent.
-**Re-verify:** `sed -n '18,62p' .github/workflows/ci.yml`.
+**Fix:** CI now has one `validate` job: install, dependency audit, typecheck, lint, a single-platform build, then `bun test --timeout 60000` against that artifact. The audit gate fails when `bun audit --json` returns any advisory. Release validation builds with the pinned `AXIOMSEC_VERSION` and runs the same suite.
+**Residual:** no OS matrix for pull requests, and Prettier remains intentionally unenforced; browser and live-provider tests skip when Chromium or keys are absent.
+**Re-verify:** `sed -n '1,60p' .github/workflows/ci.yml`.
 **Related:** `VERIFICATION.md`, `RISK-RELEASE-01`.
+
+### RISK-TUI-01 — OpenTUI 0.6 adds input latency under the PTY harness
+
+**Status:** open · **Severity:** low · **Verified:** 2026-10-23
+**Evidence:** `packages/axiomsec/src/cli/cmd/tui/app.tsx:70-90` uses OpenTUI 0.6.8; the deterministic PTY probe (`script/bench.ts tui`) measures key-to-next-frame at 69 ms versus 18 ms on the pre-upgrade binary. OpenTUI 0.6 builds its stdin parser with a hardcoded 20 ms flush timer (`@opentui/core` renderer), and the harness does not emulate terminal capability responses. Changing target/max FPS, Kitty keyboard, live rendering, syntax highlighting or spinner animation did not move the number.
+**Residual:** real terminals answer capability queries and may behave differently; the TUI is not covered by `bun test`.
+**Re-verify:** run `BENCH_TUI_KEY=x bun script/bench.ts tui` against the release binary on a real terminal-backed PTY and compare with the baseline artifact.
+**Related:** `docs/performance/README.md`, `VERIFICATION.md`.
+
+### RISK-ACP-01 — ACP 2 write path has no automated protocol test
+
+**Status:** open · **Severity:** medium · **Verified:** 2026-10-23
+**Evidence:** `packages/axiomsec/src/acp/agent.ts:159-173` registers the ACP 2 app handlers. `bun test` does not drive `session/new`, `session/prompt`, or a permission round-trip; only `initialize` was smoke-tested through the compiled binary, including the advertised `fork`/`list`/`resume` capabilities.
+**Residual:** handlers reuse the existing session manager and typecheck, but a wire-level regression (renamed field, capability mismatch, handler dispatch) would not be caught by the suite.
+**Re-verify:** drive `axiomsec acp` with an ACP client: initialize, session/new, session/prompt against the mock provider, and assert streamed updates and stop reasons.
+**Related:** `VERIFICATION.md`, `RISK-CI-01`.
+
+### RISK-DEP-01 — Drizzle 1.0 has no stable release
+
+**Status:** open · **Severity:** low · **Verified:** 2026-10-23
+**Evidence:** the root catalog pins `drizzle-orm`/`drizzle-kit` to `1.0.0-beta.22`. npm `latest` is 0.45.4, which cannot express the schema's unnamed columns; the newer 1.0 RC.5 removes `SQLiteTransaction` and weakens row inference (13 type errors), so beta.22 is the newest tagged, compatible release.
+**Residual:** beta.22 may change before 1.0 stable; re-check typecheck and the migration suite on every Drizzle release.
+**Re-verify:** `bun pm ls | grep drizzle` and `bun typecheck` after a bump.
+**Related:** `docs/performance/README.md`.
 
 ## Leads (not verified)
 

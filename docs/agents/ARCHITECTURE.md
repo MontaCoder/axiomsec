@@ -45,7 +45,7 @@ All surfaces converge on the session loop, tool registry, and cyber kernel. Ther
 
 ## 3. Boot and instruction loading
 
-- CLI entry: `packages/axiomsec/src/index.ts:64-170` (yargs). Commands that need project state call `bootstrap` (`packages/axiomsec/src/cli/bootstrap.ts:5-18`), which wraps work in `Instance.provide` and `InstanceBootstrap`.
+- CLI entry: `packages/axiomsec/src/index.ts` answers `--version` before loading the graph, then dynamically imports `packages/axiomsec/src/main.ts` (yargs). Commands that need project state call `bootstrap` (`packages/axiomsec/src/cli/bootstrap.ts:5-18`), which wraps work in `Instance.provide` and `InstanceBootstrap`.
 - `Instance` caches one context per canonical directory and restores it with AsyncLocalStorage (`packages/axiomsec/src/project/instance.ts:57-75`). `InstanceBootstrap` initializes plugins, then formatter, file, watcher, VCS, and snapshot services (`packages/axiomsec/src/project/bootstrap.ts:14-34`).
 - Services are wired through one Effect layer and shared runtime in `packages/axiomsec/src/effect/app-runtime.ts`; per-project service state uses `InstanceState` (`packages/axiomsec/src/effect/instance-state.ts`).
 - Instruction files (`packages/axiomsec/src/session/instruction.ts`):

@@ -258,10 +258,11 @@ async function tuiProbe(bin: string) {
   try {
     await waitForData(20_000)
     if (!firstFrame) throw new Error("TUI did not render a frame")
-    await Bun.sleep(1500)
+    // Let startup output and first-run work settle before timing input.
+    await Bun.sleep(4000)
     const beforeInput = performance.now()
     const next = waitForData(5_000)
-    terminal.write("/")
+    terminal.write(process.env.BENCH_TUI_KEY ?? "/")
     const latency = await next
     const inputLatencyMs = latency ? latency - beforeInput : 0
     const peakRss = rss.length ? Math.max(...rss) : 0
@@ -314,9 +315,18 @@ async function run(label: string, out?: string) {
   console.log(
     `server up ${server.startupMs}ms, RSS ${server.rssAfter3sMb}MB, idle CPU ${server.idleCpuPercent3s}%, ${server.requestsPerSecond} req/s`,
   )
-  const tui = await tuiProbe(bin)
+  const tuiSamples = [await tuiProbe(bin), await tuiProbe(bin), await tuiProbe(bin)]
+  const median = (values: number[]) => stats(values).median
+  const tui = {
+    firstDataMs: median(tuiSamples.map((sample) => sample.firstDataMs)),
+    firstFrameMs: median(tuiSamples.map((sample) => sample.firstFrameMs)),
+    inputToNextFrameMs: median(tuiSamples.map((sample) => sample.inputToNextFrameMs)),
+    outputBytes: tuiSamples[0].outputBytes,
+    peakRssMb: median(tuiSamples.map((sample) => sample.peakRssMb)),
+    samples: tuiSamples,
+  }
   console.log(
-    `tui first frame ${tui.firstFrameMs}ms, input->frame ${tui.inputToNextFrameMs}ms, RSS ${tui.peakRssMb}MB`,
+    `tui first frame ${tui.firstFrameMs}ms, input->frame ${tui.inputToNextFrameMs}ms (median of 3), RSS ${tui.peakRssMb}MB`,
   )
   const sizes = await artifacts(bin)
   console.log(`binary ${sizes.binaryMb}MB, dist ${sizes.distMb}MB, install ${sizes.installedMb}MB, lock ${sizes.lockfileLines} lines`)
@@ -377,6 +387,10 @@ const argv = process.argv.slice(2)
 if (argv[0] === "compare") {
   if (argv.length < 3) throw new Error("usage: bench.ts compare <before.json> <after.json>")
   await compare(argv[1], argv[2])
+} else if (argv[0] === "tui") {
+  const bin = resolveBinary()
+  const samples = [await tuiProbe(bin), await tuiProbe(bin), await tuiProbe(bin)]
+  console.log(JSON.stringify(samples, null, 2))
 } else {
   const labelIndex = argv.indexOf("--label")
   const outIndex = argv.indexOf("--out")
