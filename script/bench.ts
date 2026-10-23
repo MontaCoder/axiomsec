@@ -55,7 +55,16 @@ function isoHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "axiomsec-bench-"))
   return {
     dir,
-    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+    cleanup: async () => {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true })
+          return
+        } catch {
+          await Bun.sleep(250)
+        }
+      }
+    },
     env: {
       ...process.env,
       HOME: dir,
@@ -71,7 +80,7 @@ function isoHome() {
   }
 }
 
-function coldStart(bin: string, runs: number) {
+async function coldStart(bin: string, runs: number) {
   const home = isoHome()
   const env = home.env
   for (let i = 0; i < 2; i++) {
@@ -89,7 +98,7 @@ function coldStart(bin: string, runs: number) {
     help.push(performance.now() - start)
     if (h.exitCode !== 0) throw new Error("--help failed")
   }
-  home.cleanup()
+  await home.cleanup()
   return { versionMs: stats(version), helpMs: stats(help) }
 }
 
@@ -152,7 +161,7 @@ async function startServer(bin: string) {
   ])
   if (!url) throw new Error(`server did not print a URL: ${stderr}`)
   const startupMs = performance.now() - started
-  return { proc, url, startupMs, cleanup: () => { proc.kill(); home.cleanup() } }
+  return { proc, url, startupMs, cleanup: async () => { proc.kill(); await home.cleanup() } }
 }
 
 async function load(serverUrl: string) {
@@ -218,7 +227,7 @@ async function serverBench(bin: string) {
       url: server.url,
     }
   } finally {
-    server.cleanup()
+    await server.cleanup()
   }
 }
 
@@ -327,7 +336,7 @@ async function tuiProbe(bin: string) {
     try {
       terminal.kill()
     } catch {}
-    home.cleanup()
+    await home.cleanup()
   }
 }
 
@@ -355,7 +364,7 @@ async function run(label: string, out?: string) {
   const bin = resolveBinary()
   console.log(`# bench ${label}`)
   console.log(`binary ${bin}`)
-  const cold = coldStart(bin, 15)
+  const cold = await coldStart(bin, 15)
   console.log(`cold start --version median ${cold.versionMs.median}ms, --help median ${cold.helpMs.median}ms`)
   const server = await serverBench(bin)
   console.log(
