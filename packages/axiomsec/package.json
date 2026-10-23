@@ -29,7 +29,8 @@
     "typecheck": "tsc --noEmit",
     "build": "bun run script/build.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
-    "db": "bun drizzle-kit"
+    "db": "bun drizzle-kit",
+    "models:refresh": "bun run script/generate.ts --refresh"
   },
   "bin": {
     "axiomsec": "./bin/axiomsec"

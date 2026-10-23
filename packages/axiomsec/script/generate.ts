@@ -25,12 +25,16 @@ async function readExistingSnapshot() {
   return data && data !== "{}" ? data : undefined
 }
 
+const refresh = process.argv.includes("--refresh") || enabled(process.env.AXIOMSEC_REFRESH_MODELS)
+
 async function readModelsData() {
   if (process.env.MODELS_DEV_API_JSON) {
     return Bun.file(process.env.MODELS_DEV_API_JSON).text()
   }
 
-  if (enabled(process.env.AXIOMSEC_DISABLE_MODELS_FETCH)) {
+  // Builds must be offline and reproducible. Refresh the catalogue explicitly
+  // with `--refresh` or AXIOMSEC_REFRESH_MODELS=1.
+  if (!refresh) {
     return (await readExistingSnapshot()) ?? "{}"
   }
 

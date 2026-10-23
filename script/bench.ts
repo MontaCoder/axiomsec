@@ -261,6 +261,7 @@ async function tuiProbe(bin: string) {
     // Let startup output and first-run work settle before timing input.
     await Bun.sleep(4000)
     const beforeInput = performance.now()
+    const inputSentAt = Date.now()
     const next = waitForData(5_000)
     terminal.write(process.env.BENCH_TUI_KEY ?? "/")
     const latency = await next
@@ -270,6 +271,7 @@ async function tuiProbe(bin: string) {
       firstDataMs: round(firstData),
       firstFrameMs: round(firstFrame),
       inputToNextFrameMs: round(inputLatencyMs),
+      inputSentAt,
       outputBytes: bytes,
       peakRssMb: round(peakRss / 1024 / 1024),
     }

@@ -37,7 +37,7 @@ replace, the manual `V-S*` TUI scenarios.
 | Typecheck (uncached) | 3.9 s | 3.3 s | -15 % |
 | Lint | 3.1 s / 0 errors | 3.2 s / 0 errors | ~flat (964 warnings) |
 | Test suite | 343 tests / 226.7 s | 343 tests / 217 s | -4.3 % |
-| Single-platform build | 3.0 s | 3.4 s | +13 % (reproducible) |
+| Single-platform build | 3.0 s | **2.6 s** | **-12.5 %** |
 | Compiled binary | 134.4 MB | 142.6 MB | **+6.1 %** |
 | Audit | 58 findings in the intermediate tree (2 critical) | **0 findings / 609 packages** | **clean** |
 
@@ -136,6 +136,8 @@ behavior.
   `AXIOMSEC_VERSION`, `AXIOMSEC_CHANNEL` and `SOURCE_DATE_EPOCH` produced
   byte-identical binaries (SHA-256
   `d0675fc755c5c829f39ae8b2ae0cf51060537b47501eb78846b0de7f1b70676a`).
+  Builds are offline by default: the bundled models.dev snapshot is reused
+  unless `bun run --cwd packages/axiomsec models:refresh` is run explicitly.
 - **Pinned versions:** every direct dependency is exact; `bunfig.toml` uses
   `exact = true`; no patches, no `pkg.pr.new`, no dev-build packages.
 - **CI:** four installs and a duplicate build were merged into one `validate`
