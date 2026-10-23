@@ -148,11 +148,9 @@ await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
 if (!skipInstall && !singleFlag) {
-  // Single-target builds already have the host platform packages. Release
-  // builds need the target OS (which may differ from the build host).
-  const installOs = singleFlag ? process.platform : buildOs?.length === 1 ? buildOs[0] : "*"
-  await $`bun install ${linker} --os=${installOs} --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install ${linker} --os=${installOs} --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  // Release builds may target another OS/libc and need every native variant.
+  await $`bun install ${linker} --os="*" --cpu="*" --libc="*" --no-save @opentui/core@${pkg.dependencies["@opentui/core"]}`
+  await $`bun install ${linker} --os="*" --cpu="*" --libc="*" --no-save @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
 for (const item of targets) {
   const name = [

@@ -5,6 +5,15 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — 2026-10-23
+
+### Fixed
+
+- Release builds now install every OpenTUI and watcher native variant with
+  `--os="*" --cpu="*" --libc="*" --no-save`, so musl arm64/x64 and all other
+  targets build from one tree. All six Linux targets were cross-built locally
+  before tagging.
+
 ## [0.5.1] — 2026-10-23
 
 ### Fixed
@@ -404,7 +413,8 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.2
 [0.5.1]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.1
 [0.5.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.0
 [0.4.5]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.4.5
