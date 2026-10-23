@@ -1,0 +1,50 @@
+{
+  "label": "baseline",
+  "date": "2026-10-23T17:33:34.995Z",
+  "platform": "win32-x64",
+  "bun": "1.4.4",
+  "node": "v26.3.0",
+  "binary": "..\\..\\..\\AppData\\Local\\Temp\\axiomsec-baseline\\axiomsec.exe",
+  "coldStart": {
+    "versionMs": {
+      "min": 384.77,
+      "median": 389.47,
+      "p95": 392.66,
+      "max": 392.66,
+      "mean": 388.63,
+      "samples": 15
+    },
+    "helpMs": {
+      "min": 400.88,
+      "median": 408.38,
+      "p95": 531.43,
+      "max": 531.43,
+      "mean": 415.74,
+      "samples": 15
+    }
+  },
+  "server": {
+    "startupMs": 549.81,
+    "rssAfter3sMb": 161.54,
+    "idleCpuPercent3s": 0.52,
+    "requestsPerSecond": 2337,
+    "errors": 0,
+    "peakRssMb": null,
+    "idleCpuPercent": null,
+    "serverPid": 4996
+  },
+  "tui": {
+    "firstDataMs": 9.6,
+    "firstFrameMs": 9.6,
+    "inputToNextFrameMs": 392.45,
+    "outputBytes": 713,
+    "peakRssMb": 295.38
+  },
+  "sizes": {
+    "binaryMb": 134.38,
+    "distMb": 134.39,
+    "installedMb": 1640.98,
+    "lockfileLines": 2016,
+    "binarySha256": "e2015ef86a48be9827f122260fbc908aefb2a06da5d649b5b0299bf291fab5ac"
+  }
+}
