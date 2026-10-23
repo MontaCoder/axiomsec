@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "name": "axiomsec",
   "description": "AI agent harness for AppSec and pentest operations",
   "type": "module",
@@ -113,7 +113,6 @@
     "gitlab-ai-provider": "6.23.0",
     "glob": "13.0.6",
     "google-auth-library": "11.3.1",
-    "gray-matter": "4.0.3",
     "hono": "catalog:",
     "hono-openapi": "catalog:",
     "ignore": "7.0.5",
@@ -126,7 +125,7 @@
     "playwright": "1.64.1",
     "remeda": "catalog:",
     "ripgrep": "0.3.1",
-    "semver": "^7.6.3",
+    "semver": "catalog:",
     "solid-js": "catalog:",
     "tree-sitter-bash": "0.25.0",
     "tree-sitter-powershell": "0.25.10",
@@ -145,7 +144,8 @@
     "@parcel/watcher-win32-arm64": "2.6.0",
     "@parcel/watcher-win32-x64": "2.6.0",
     "@ai-sdk/otel": "1.0.151",
-    "@opentelemetry/api-logs": "0.214.0"
+    "@opentelemetry/api-logs": "0.214.0",
+    "js-yaml": "5.5.0"
   },
   "overrides": {
     "drizzle-orm": "catalog:"

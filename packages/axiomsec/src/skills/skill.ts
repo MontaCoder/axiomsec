@@ -1,7 +1,7 @@
 import os from "os"
 import path from "path"
 import { pathToFileURL } from "url"
-import matter from "gray-matter"
+import * as Frontmatter from "../support/frontmatter"
 import z from "zod"
 import passiveOsintMd from "../../skills/passive-osint/SKILL.md" with { type: "text" }
 import forensicsKitMd from "../../skills/forensics-kit/SKILL.md" with { type: "text" }
@@ -111,7 +111,7 @@ const BUILTIN_SKILLS = [
 ]
 
 const addBuiltin = Effect.fnUntraced(function* (state: State, content: string, location: string) {
-  const md = matter(content)
+  const md = Frontmatter.parse(content)
   const parsed = Info.pick({ name: true, description: true }).safeParse(md.data)
   if (!parsed.success) {
     log.error("invalid builtin skill frontmatter", { location })

@@ -1,5 +1,5 @@
 import { NamedError } from "@axiomsec/shared/util/error"
-import matter from "gray-matter"
+import * as Frontmatter from "../support/frontmatter"
 import { z } from "zod"
 import { Filesystem } from "../support"
 
@@ -71,11 +71,10 @@ export async function parse(filePath: string) {
   const template = await Filesystem.readText(filePath)
 
   try {
-    const md = matter(template)
-    return md
+    return Frontmatter.parse(template)
   } catch {
     try {
-      return matter(fallbackSanitization(template))
+      return Frontmatter.parse(fallbackSanitization(template))
     } catch (err) {
       throw new FrontmatterError(
         {
