@@ -1,0 +1,80 @@
+{
+  "label": "tui-idle",
+  "date": "2026-10-23T22:58:57.597Z",
+  "platform": "win32-x64",
+  "bun": "1.4.4",
+  "node": "v26.3.0",
+  "binary": "packages\\axiomsec\\dist\\axiomsec-windows-x64\\bin\\axiomsec.exe",
+  "coldStart": {
+    "versionMs": {
+      "min": 22.75,
+      "median": 23.66,
+      "p95": 24.4,
+      "max": 24.4,
+      "mean": 23.69,
+      "samples": 15
+    },
+    "helpMs": {
+      "min": 388.58,
+      "median": 391.32,
+      "p95": 416.14,
+      "max": 416.14,
+      "mean": 392.91,
+      "samples": 15
+    }
+  },
+  "server": {
+    "startupMs": 441.88,
+    "rssAfter3sMb": 133.52,
+    "idleCpuPercent3s": 1.04,
+    "requestsPerSecond": 2485.75,
+    "errors": 0,
+    "peakRssMb": null,
+    "idleCpuPercent": null,
+    "serverPid": 9196
+  },
+  "tui": {
+    "firstDataMs": 8.74,
+    "firstFrameMs": 8.74,
+    "inputToNextFrameMs": 10.3,
+    "idleCpuPercent": 65.23,
+    "outputBytes": 18507,
+    "peakRssMb": 354.8,
+    "samples": [
+      {
+        "firstDataMs": 9.21,
+        "firstFrameMs": 9.21,
+        "inputToNextFrameMs": 12.75,
+        "inputSentAt": 1792796318702,
+        "idleCpuPercent": 65.23,
+        "outputBytes": 18507,
+        "peakRssMb": 347.07
+      },
+      {
+        "firstDataMs": 8.74,
+        "firstFrameMs": 8.74,
+        "inputToNextFrameMs": 10.3,
+        "inputSentAt": 1792796323747,
+        "idleCpuPercent": 65.23,
+        "outputBytes": 18688,
+        "peakRssMb": 354.8
+      },
+      {
+        "firstDataMs": 8.72,
+        "firstFrameMs": 8.72,
+        "inputToNextFrameMs": 10.26,
+        "inputSentAt": 1792796328764,
+        "idleCpuPercent": 62.5,
+        "outputBytes": 18486,
+        "peakRssMb": 366.33
+      }
+    ]
+  },
+  "sizes": {
+    "binaryMb": 142.49,
+    "distMb": 142.49,
+    "installedMb": 1515,
+    "lockfileLines": 1774,
+    "binarySha256": "894a06f9a65596d7693147bccadab9f8b8051c28f1ee5da17f07bf6f04d1084d"
+  }
+}

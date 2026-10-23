@@ -1,5 +1,5 @@
 import { BoxRenderable, MouseButton, MouseEvent, RGBA, TextAttributes } from "@opentui/core"
-import { For, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+import { For, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { useTheme, tint } from "@tui/context/theme"
 import { useKV } from "../context/kv"
 import { logo } from "@/cli/logo"
@@ -456,11 +456,21 @@ const TOTAL_H = logo.left.length
 // shares this reference so the loop is process-global and consistent.
 const PROCESS_START = performance.now()
 
-// Ambient effects are slow (a beam sweep and a short glitch), so they do not
-// need a 60fps render loop. Running the idle logo at 20fps keeps the event
-// loop free for input; intro and pointer interactions still run at 60fps.
+// Frame budgets are chosen per effect: the scan/ignite sweeps are the only
+// phases with fast motion, cipher rain only changes every 80ms, and ambient
+// effects are slow. Pointer ripples stay at 60fps because they track input.
 const ACTIVE_MS = 16
 const AMBIENT_MS = 50
+const RAIN_MS = 50
+const SWEEP_MS = 33
+const DISSOLVE_MS = 40
+
+function introFrameMs(phase: IntroPhase): number {
+  if (phase === "rain") return RAIN_MS
+  if (phase === "scan" || phase === "ignite") return SWEEP_MS
+  if (phase === "dissolve") return DISSOLVE_MS
+  return ACTIVE_MS
+}
 
 // ─── Ambient (idle phase only) ───────────────────────────────────────────
 //
@@ -525,6 +535,51 @@ type IntroState = {
 
 const IDLE_INTRO: IntroState = { phase: "idle", scanX: TOTAL_W, igniteX: TOTAL_W, dissolve: 0 }
 
+function introAt(elapsed: number): IntroState {
+  if (elapsed < INTRO_RAIN_END) {
+    return { phase: "rain", scanX: 0, igniteX: 0, dissolve: 0 }
+  }
+  if (elapsed < INTRO_SCAN_END) {
+    const p = (elapsed - INTRO_RAIN_END) / (INTRO_SCAN_END - INTRO_RAIN_END)
+    return { phase: "scan", scanX: ease(p) * TOTAL_W, igniteX: 0, dissolve: 0 }
+  }
+  if (elapsed < INTRO_IGNITE_END) {
+    const p = (elapsed - INTRO_SCAN_END) / (INTRO_IGNITE_END - INTRO_SCAN_END)
+    return { phase: "ignite", scanX: TOTAL_W, igniteX: ease(p) * TOTAL_W, dissolve: 0 }
+  }
+  if (elapsed < DISSOLVE_START) return IDLE_INTRO
+  const dissolve = (elapsed - DISSOLVE_START) / DISSOLVE_DURATION
+  return { phase: "dissolve", scanX: TOTAL_W, igniteX: TOTAL_W, dissolve: ease(dissolve) }
+}
+
+function introPhaseAt(t: number): IntroPhase {
+  return introAt((t - PROCESS_START) % CYCLE_PERIOD).phase
+}
+
+// Idle visuals are pure functions of absolute time, so between ambient
+// windows the next scheduled frame only needs to land on the next boundary
+// that can change a pixel. Without this the logo re-rendered static cells at
+// 20 fps forever and held a whole CPU core.
+function introWaitAt(t: number) {
+  const elapsed = (t - PROCESS_START) % CYCLE_PERIOD
+  if (elapsed < INTRO_RAIN_END) return INTRO_RAIN_END - elapsed
+  if (elapsed < INTRO_SCAN_END) return INTRO_SCAN_END - elapsed
+  if (elapsed < INTRO_IGNITE_END) return INTRO_IGNITE_END - elapsed
+  if (elapsed < DISSOLVE_START) return DISSOLVE_START - elapsed
+  return CYCLE_PERIOD - elapsed
+}
+
+function quietDelay(t: number): number {
+  const burstPhase = t % BURST_PERIOD
+  const glitchPhase = t % GLITCH_PERIOD
+  // Active ambient effects animate continuously; end a tick past the window
+  // so the final static frame clears the effect.
+  if (burstPhase < BURST_DURATION) return Math.min(AMBIENT_MS, BURST_DURATION - burstPhase + 1)
+  if (glitchPhase < GLITCH_DURATION) return Math.min(AMBIENT_MS, GLITCH_DURATION - glitchPhase + 1)
+  const wait = Math.min(introWaitAt(t), BURST_PERIOD - burstPhase, GLITCH_PERIOD - glitchPhase)
+  return Math.max(AMBIENT_MS, wait + 1)
+}
+
 export function Logo() {
   const { theme } = useTheme()
   const kv = useKV()
@@ -535,25 +590,21 @@ export function Logo() {
   const [glow, setGlow] = createSignal<Glow>()
   const [now, setNow] = createSignal(performance.now())
   let box: BoxRenderable | undefined
-  let timer: ReturnType<typeof setInterval> | undefined
-  let intervalMs = 0
-  let introActive = false
+  let timer: ReturnType<typeof setTimeout> | undefined
 
   const stop = () => {
     if (!timer) return
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = undefined
-    intervalMs = 0
   }
 
-  const setRate = (ms: number) => {
-    if (timer && intervalMs === ms) return
-    if (timer) clearInterval(timer)
-    intervalMs = ms
-    timer = setInterval(tick, ms)
+  const schedule = (ms: number) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(tick, Math.max(0, ms))
   }
 
   const tick = () => {
+    timer = undefined
     const t = performance.now()
     setNow(t)
     const item = hold()
@@ -562,32 +613,30 @@ export function Logo() {
     }
     let live = false
     setRings((list) => {
-      const next = list.filter((item) => t - item.at < LIFE)
+      if (!list.length) return list
+      const next = list.filter((entry) => t - entry.at < LIFE)
       live = next.length > 0
-      return next
+      return next.length === list.length ? list : next
     })
     const flash = glow()
     if (flash && t - flash.at >= GLOW_OUT) {
       setGlow(undefined)
     }
     if (!live) setRelease(undefined)
-    if (live || hold() || release() || glow() || introActive) {
-      setRate(ACTIVE_MS)
+    const phase = introPhaseAt(t)
+    if (live || hold() || release() || glow() || phase !== "idle") {
+      schedule(phase === "idle" ? ACTIVE_MS : Math.min(introFrameMs(phase), introWaitAt(t) + 1))
       return
     }
-    // Keep the timer running while animations are enabled so the intro
-    // reveal and ambient effects keep ticking. We only fall through to
-    // stop() when animations are off and there's nothing live.
     if (animationsOn()) {
-      setRate(AMBIENT_MS)
+      schedule(quietDelay(t))
       return
     }
     stop()
   }
 
   const start = () => {
-    if (timer) return
-    setRate(ACTIVE_MS)
+    schedule(0)
   }
 
   const hit = (x: number, y: number) => {
@@ -669,35 +718,12 @@ export function Logo() {
   // the intro/dissolve branches entirely (no animation cost).
   const introState = createMemo<IntroState>(() => {
     if (!animationsOn()) return IDLE_INTRO
-    const elapsed = (now() - PROCESS_START) % CYCLE_PERIOD
-
-    if (elapsed < INTRO_RAIN_END) {
-      return { phase: "rain", scanX: 0, igniteX: 0, dissolve: 0 }
-    }
-    if (elapsed < INTRO_SCAN_END) {
-      const p = (elapsed - INTRO_RAIN_END) / (INTRO_SCAN_END - INTRO_RAIN_END)
-      return { phase: "scan", scanX: ease(p) * TOTAL_W, igniteX: 0, dissolve: 0 }
-    }
-    if (elapsed < INTRO_IGNITE_END) {
-      const p = (elapsed - INTRO_SCAN_END) / (INTRO_IGNITE_END - INTRO_SCAN_END)
-      return { phase: "ignite", scanX: TOTAL_W, igniteX: ease(p) * TOTAL_W, dissolve: 0 }
-    }
-    if (elapsed < DISSOLVE_START) return IDLE_INTRO
-
-    // Dissolve runs in the last DISSOLVE_DURATION ms of the cycle: cells
-    // smoothly lerp from their idle colours toward the cipher-rain target,
-    // so when the cycle wraps into the next RAIN phase there is no hard cut.
-    const dissolve = (elapsed - DISSOLVE_START) / DISSOLVE_DURATION
-    return { phase: "dissolve", scanX: TOTAL_W, igniteX: TOTAL_W, dissolve: ease(dissolve) }
+    return introAt((now() - PROCESS_START) % CYCLE_PERIOD)
   })
 
   // Track the current phase as a primitive so downstream effects only re-run
   // on actual phase transitions, not on every 16ms object-identity update.
   const introPhase = createMemo(() => introState().phase)
-
-  createEffect(() => {
-    introActive = introPhase() !== "idle"
-  })
 
   // Whenever the cycle leaves IDLE (i.e. a new intro begins), drop any
   // in-flight mouse interactions. This guarantees a stale charged ripple
@@ -713,9 +739,16 @@ export function Logo() {
   })
 
   // Auto-start the timer on mount so the cycle is driven without needing
-  // user interaction. onCleanup(stop) handles shutdown.
-  onMount(() => {
-    if (animationsOn()) start()
+  // user interaction. Toggling animations off renders one static frame and
+  // then parks the timer until an interaction or a re-enable. onCleanup(stop)
+  // handles shutdown.
+  createEffect(() => {
+    if (animationsOn()) {
+      if (!timer) start()
+      return
+    }
+    setNow(performance.now())
+    if (!hold() && !release() && !glow() && rings().length === 0) stop()
   })
 
   const renderLine = (

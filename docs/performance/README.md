@@ -19,6 +19,17 @@ paint and input-to-next-frame latency through a real PTY. TUI numbers are
 end-to-end interactions with the compiled binary; they complement, but do not
 replace, the manual `V-S*` TUI scenarios.
 
+Two environment knobs isolate TUI cost without changing the default run:
+
+- `BENCH_TUI_ANIMATIONS=off` seeds `animations_enabled: false` into the
+  throwaway state directory, so the logo's timers never start.
+- `BENCH_TUI_IDLE_MS=<ms>` widens the idle CPU window (default 4000). Use
+  30000 for steady-state numbers; the default window still contains first-run
+  mount and sync work, which inflates the average.
+
+`isoHome()` also pins `XDG_STATE_HOME`, so a developer's real `kv.json` (for
+example, one with animations disabled) cannot leak into a probe.
+
 ## Results (2026-10-23, win32-x64, Bun 1.4.4)
 
 | Metric | Baseline | After | Delta |
@@ -60,6 +71,60 @@ requests a render. The benchmark now seeds a mock provider so it reaches the
 real prompt and measures until the typed marker is painted. Median input
 latency fell from 34.0 to 24.5 ms, TUI idle CPU from 127 % to 107 %, and TUI
 peak RSS from 624 to 523 MB.
+
+## TUI idle loop (2026-10-23)
+
+The home logo was the largest remaining idle consumer. Its intro cycle loops
+every 8 s, and the component's timer re-rendered every cell every 16 ms during
+intros and every 50 ms otherwise — including the roughly 60 % of the cycle
+where no ambient effect is active and the pixels cannot change. The PTY probe
+measured 106.6 % idle CPU and 523 MB peak RSS.
+
+The component now:
+
+- schedules the next frame at the next ambient or intro boundary during quiet
+  idle instead of ticking continuously;
+- runs cipher rain at 20 fps, scan/ignite sweeps at 30 fps, and keeps 60 fps
+  for pointer ripples; and
+- renders one final frame at each ambient window end so the effect clears.
+
+| Metric (4 s probe) | Before | After | Delta |
+|---|---:|---:|---:|
+| TUI idle CPU | 106.6 % | **65.2 %** | **-38.8 %** |
+| TUI peak RSS | 522.6 MB | **354.8 MB** | **-32.1 %** |
+| TUI input → painted text | 24.5 ms | **10.3 ms** | **-57.9 %** |
+
+The 4 s window includes first-run mount and sync work, which is why it reads
+higher than the steady state. A 30 s window (`BENCH_TUI_IDLE_MS=30000`) puts
+the median at **28.2 % CPU / ~415 MB peak RSS** with animations enabled and
+**7.5 % / ~355 MB** with `BENCH_TUI_ANIMATIONS=off`. The remaining animation
+cost is the deliberate 8 s intro cycle; the loop now sleeps between effects
+instead of repainting static cells.
+
+Cold start, TUI first paint (9–18 ms on both builds), server
+startup/RSS/throughput, and binary size stayed within run-to-run noise (see
+`tui-idle.json`). The install-tree figure in that
+artifact reflects a release tree with every native variant installed; it is
+not comparable to the 0.5.0 `node_modules` measurement.
+
+### Remaining opportunities
+
+Measured on the same host, after this change:
+
+- **Intro cadence.** The 8 s decorative cycle still averages ~20 % CPU while
+  the home logo is visible. Shortening the cycle, rendering the reveal once
+  per screen rather than looping, or batching cell updates into style runs
+  would reduce it further; each changes the visual design.
+- **CLI startup.** `--help` still imports all 22 command graphs (~391 ms) and
+  `serve` takes ~442 ms. Loading only the invoked command's module (and all
+  modules for `--help`) is the next candidate.
+- **Snapshot cost per mutation.** `Tool.wrap` rebuilds the context pack by
+  reading up to 1 MB from each projection file after every state-changing
+  call. The read is bounded (`RISK-PERF-01`), but an incrementally maintained
+  snapshot would remove it from the tool latency path.
+- **TUI resident set.** ~355 MB with animations off is dominated by the
+  worker, native scene buffers and the ~500 renderables on the home screen;
+  collapsing static logo cells into style runs would also lower it.
 
 ### Why `--version` is 13x faster
 

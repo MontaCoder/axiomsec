@@ -5,6 +5,17 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Performance
+
+- The home logo no longer repaints static cells: quiet idle periods sleep until
+  the next ambient effect, cipher rain runs at 20 fps, and the scan/ignite
+  sweeps run at 30 fps while pointer ripples keep 60 fps. The PTY probe's TUI
+  idle CPU fell from 106.6 % to 65.2 %, peak RSS from 522.6 MB to 354.8 MB,
+  and input-to-painted-text latency from 24.5 ms to 10.3 ms; a 30 s
+  steady-state probe measures 28.2 % CPU instead of a continuously busy loop.
+
 ## [0.5.2] — 2026-10-23
 
 ### Fixed

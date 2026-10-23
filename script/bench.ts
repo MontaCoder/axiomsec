@@ -53,6 +53,12 @@ function round(value: number) {
 
 function isoHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "axiomsec-bench-"))
+  const state = path.join(dir, "state")
+  // BENCH_TUI_ANIMATIONS=off isolates animation cost from the rest of the TUI.
+  if (process.env.BENCH_TUI_ANIMATIONS === "off") {
+    fs.mkdirSync(path.join(state, "axiomsec"), { recursive: true })
+    fs.writeFileSync(path.join(state, "axiomsec", "kv.json"), JSON.stringify({ animations_enabled: false }))
+  }
   return {
     dir,
     cleanup: async () => {
@@ -72,6 +78,7 @@ function isoHome() {
       XDG_CONFIG_HOME: path.join(dir, "config"),
       XDG_DATA_HOME: path.join(dir, "data"),
       XDG_CACHE_HOME: path.join(dir, "cache"),
+      XDG_STATE_HOME: state,
       AXIOMSEC_DISABLE_SHARE: "1",
       AXIOMSEC_DISABLE_TELEMETRY: "1",
       TERM: "xterm-256color",
@@ -305,10 +312,11 @@ async function tuiProbe(bin: string) {
     await waitForData(20_000)
     if (!firstFrame) throw new Error("TUI did not render a frame")
     // Let startup output and first-run work settle before timing input.
+    const idleMs = Number(process.env.BENCH_TUI_IDLE_MS ?? 4000)
     const cpuBefore = await processMetrics(terminal.pid)
-    await Bun.sleep(4000)
+    await Bun.sleep(idleMs)
     const cpuAfter = await processMetrics(terminal.pid)
-    const idleCpuPercent = ((cpuAfter.cpuSeconds - cpuBefore.cpuSeconds) / 4) * 100
+    const idleCpuPercent = ((cpuAfter.cpuSeconds - cpuBefore.cpuSeconds) / (idleMs / 1000)) * 100
     const beforeInput = performance.now()
     const inputSentAt = Date.now()
     const key = process.env.BENCH_TUI_KEY ?? "zzqx"
