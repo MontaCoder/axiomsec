@@ -6,7 +6,7 @@
   "license": "AGPL-3.0-or-later",
   "private": true,
   "scripts": {
-    "typecheck": "tsgo --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "exports": {
     "./*": "./src/*.ts"
@@ -15,8 +15,10 @@
   "devDependencies": {
     "@types/semver": "catalog:",
     "@types/bun": "catalog:",
+    "@types/mime-types": "3.0.1",
     "@types/npmcli__arborist": "6.3.3",
-    "@tsconfig/bun": "catalog:"
+    "@tsconfig/bun": "catalog:",
+    "typescript": "catalog:"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
@@ -31,5 +33,8 @@
   },
   "overrides": {
     "drizzle-orm": "catalog:"
+  },
+  "engines": {
+    "bun": ">=1.4.4"
   }
 }
