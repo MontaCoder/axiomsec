@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bun 1.4.4, TypeScript 7.0.2 (native), oxlint 1.89, Prettier 3.9.10; Turbo
   and the native-preview toolchain removed.
+- AI SDK 7.0.151 with deduplicated provider, provider-utils and gateway copies.
 - Effect 4.0.6 stable, OpenTUI 0.6.8, Solid 1.9.17, AI SDK 7 with provider
   majors 3/4/5, ACP SDK 2.0.1, Zod 4.6.7, OTel 1.10/0.300/2.12, Hono OpenAPI
   1.5.0, Clack 1.8.1, Drizzle 1.0.0-beta.22.
