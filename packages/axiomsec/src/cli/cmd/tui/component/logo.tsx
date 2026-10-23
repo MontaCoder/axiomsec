@@ -456,6 +456,12 @@ const TOTAL_H = logo.left.length
 // shares this reference so the loop is process-global and consistent.
 const PROCESS_START = performance.now()
 
+// Ambient effects are slow (a beam sweep and a short glitch), so they do not
+// need a 60fps render loop. Running the idle logo at 20fps keeps the event
+// loop free for input; intro and pointer interactions still run at 60fps.
+const ACTIVE_MS = 16
+const AMBIENT_MS = 50
+
 // ─── Ambient (idle phase only) ───────────────────────────────────────────
 //
 // Two cheap, deterministic-from-time effects keep the logo alive without
@@ -530,11 +536,21 @@ export function Logo() {
   const [now, setNow] = createSignal(performance.now())
   let box: BoxRenderable | undefined
   let timer: ReturnType<typeof setInterval> | undefined
+  let intervalMs = 0
+  let introActive = false
 
   const stop = () => {
     if (!timer) return
     clearInterval(timer)
     timer = undefined
+    intervalMs = 0
+  }
+
+  const setRate = (ms: number) => {
+    if (timer && intervalMs === ms) return
+    if (timer) clearInterval(timer)
+    intervalMs = ms
+    timer = setInterval(tick, ms)
   }
 
   const tick = () => {
@@ -555,17 +571,23 @@ export function Logo() {
       setGlow(undefined)
     }
     if (!live) setRelease(undefined)
-    if (live || hold() || release() || glow()) return
+    if (live || hold() || release() || glow() || introActive) {
+      setRate(ACTIVE_MS)
+      return
+    }
     // Keep the timer running while animations are enabled so the intro
     // reveal and ambient effects keep ticking. We only fall through to
     // stop() when animations are off and there's nothing live.
-    if (animationsOn()) return
+    if (animationsOn()) {
+      setRate(AMBIENT_MS)
+      return
+    }
     stop()
   }
 
   const start = () => {
     if (timer) return
-    timer = setInterval(tick, 16)
+    setRate(ACTIVE_MS)
   }
 
   const hit = (x: number, y: number) => {
@@ -672,6 +694,10 @@ export function Logo() {
   // Track the current phase as a primitive so downstream effects only re-run
   // on actual phase transitions, not on every 16ms object-identity update.
   const introPhase = createMemo(() => introState().phase)
+
+  createEffect(() => {
+    introActive = introPhase() !== "idle"
+  })
 
   // Whenever the cycle leaves IDLE (i.e. a new intro begins), drop any
   // in-flight mouse interactions. This guarantees a stale charged ripple

@@ -221,6 +221,27 @@ async function serverBench(bin: string) {
 
 async function tuiProbe(bin: string) {
   const home = isoHome()
+  const model = {
+    model: "mock/mock-model",
+    provider: {
+      mock: {
+        id: "mock",
+        name: "Mock",
+        env: ["MOCK_API_KEY"],
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: "http://127.0.0.1:1", apiKey: "mock" },
+        models: {
+          "mock-model": {
+            name: "Mock",
+            tool_call: true,
+            limit: { context: 8192, output: 1024 },
+            cost: { input: 0, output: 0 },
+          },
+        },
+      },
+    },
+  }
+  Object.assign(home.env, { AXIOMSEC_CONFIG_CONTENT: JSON.stringify(model), MOCK_API_KEY: "mock" })
   const terminal = spawnPty(bin, [], {
     name: "xterm-256color",
     cols: 120,
@@ -233,7 +254,9 @@ async function tuiProbe(bin: string) {
   let firstFrame = 0
   let lastData = 0
   let bytes = 0
+  let captured = ""
   let pending: ((value: number) => void) | undefined
+  let markerWaiter: { marker: string; from: number; resolve: (value: number) => void } | undefined
   const rss: number[] = []
   const sampler = setInterval(async () => {
     try {
@@ -242,10 +265,16 @@ async function tuiProbe(bin: string) {
   }, 250)
   terminal.onData((data) => {
     bytes += data.length
+    captured += data
     const now = performance.now()
     if (!firstData && data.length > 0) firstData = now - started
     if (!firstFrame && data.includes("\x1b[")) firstFrame = now - started
     lastData = now
+    if (markerWaiter && captured.slice(markerWaiter.from).includes(markerWaiter.marker)) {
+      const waiter = markerWaiter
+      markerWaiter = undefined
+      waiter.resolve(now)
+    }
     const resolve = pending
     pending = undefined
     resolve?.(now)
@@ -255,23 +284,34 @@ async function tuiProbe(bin: string) {
       pending = resolve
       setTimeout(() => resolve(0), timeoutMs)
     })
+  const waitForMarker = (marker: string, timeoutMs: number) =>
+    new Promise<number>((resolve) => {
+      markerWaiter = { marker, from: captured.length, resolve }
+      setTimeout(() => resolve(0), timeoutMs)
+    })
   try {
     await waitForData(20_000)
     if (!firstFrame) throw new Error("TUI did not render a frame")
     // Let startup output and first-run work settle before timing input.
+    const cpuBefore = await processMetrics(terminal.pid)
     await Bun.sleep(4000)
+    const cpuAfter = await processMetrics(terminal.pid)
+    const idleCpuPercent = ((cpuAfter.cpuSeconds - cpuBefore.cpuSeconds) / 4) * 100
     const beforeInput = performance.now()
     const inputSentAt = Date.now()
-    const next = waitForData(5_000)
-    terminal.write(process.env.BENCH_TUI_KEY ?? "/")
+    const key = process.env.BENCH_TUI_KEY ?? "zzqx"
+    const next = /^[ -~]+$/.test(key) ? waitForMarker(key, 5_000) : waitForData(5_000)
+    terminal.write(key)
     const latency = await next
     const inputLatencyMs = latency ? latency - beforeInput : 0
     const peakRss = rss.length ? Math.max(...rss) : 0
+    if (process.env.BENCH_TUI_OUT) Bun.write(process.env.BENCH_TUI_OUT, captured)
     return {
       firstDataMs: round(firstData),
       firstFrameMs: round(firstFrame),
       inputToNextFrameMs: round(inputLatencyMs),
       inputSentAt,
+      idleCpuPercent: round(idleCpuPercent),
       outputBytes: bytes,
       peakRssMb: round(peakRss / 1024 / 1024),
     }
@@ -323,12 +363,13 @@ async function run(label: string, out?: string) {
     firstDataMs: median(tuiSamples.map((sample) => sample.firstDataMs)),
     firstFrameMs: median(tuiSamples.map((sample) => sample.firstFrameMs)),
     inputToNextFrameMs: median(tuiSamples.map((sample) => sample.inputToNextFrameMs)),
+    idleCpuPercent: median(tuiSamples.map((sample) => sample.idleCpuPercent)),
     outputBytes: tuiSamples[0].outputBytes,
     peakRssMb: median(tuiSamples.map((sample) => sample.peakRssMb)),
     samples: tuiSamples,
   }
   console.log(
-    `tui first frame ${tui.firstFrameMs}ms, input->frame ${tui.inputToNextFrameMs}ms (median of 3), RSS ${tui.peakRssMb}MB`,
+    `tui first frame ${tui.firstFrameMs}ms, input->frame ${tui.inputToNextFrameMs}ms, idle CPU ${tui.idleCpuPercent}% (median of 3), RSS ${tui.peakRssMb}MB`,
   )
   const sizes = await artifacts(bin)
   console.log(`binary ${sizes.binaryMb}MB, dist ${sizes.distMb}MB, install ${sizes.installedMb}MB, lock ${sizes.lockfileLines} lines`)
@@ -375,6 +416,7 @@ async function compare(beforePath: string, afterPath: string) {
   add("HTTP throughput", before.server.requestsPerSecond, after.server.requestsPerSecond, " req/s", false)
   add("TUI first frame", before.tui.firstFrameMs, after.tui.firstFrameMs, "ms")
   add("TUI input latency", before.tui.inputToNextFrameMs, after.tui.inputToNextFrameMs, "ms")
+  add("TUI idle CPU", before.tui.idleCpuPercent, after.tui.idleCpuPercent, "%")
   add("TUI peak RSS", before.tui.peakRssMb, after.tui.peakRssMb, "MB")
   add("binary size", before.sizes.binaryMb, after.sizes.binaryMb, "MB")
   add("dist size", before.sizes.distMb, after.sizes.distMb, "MB")

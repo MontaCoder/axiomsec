@@ -866,12 +866,13 @@ names the test that must go red if the fix is reverted.
 **Re-verify:** `sed -n '1,60p' .github/workflows/ci.yml`.
 **Related:** `VERIFICATION.md`, `RISK-RELEASE-01`.
 
-### RISK-TUI-01 — OpenTUI 0.6 adds input latency under the PTY harness
+### RISK-TUI-01 — TUI idle animation could starve input
 
-**Status:** open · **Severity:** low · **Verified:** 2026-10-23
-**Evidence:** `packages/axiomsec/src/cli/cmd/tui/app.tsx:70-90` uses OpenTUI 0.6.8; the deterministic PTY probe (`script/bench.ts tui`) measures key-to-next-frame at 69 ms versus 18 ms on the pre-upgrade binary. OpenTUI 0.6 builds its stdin parser with a hardcoded 20 ms flush timer (`@opentui/core` renderer), and the harness does not emulate terminal capability responses. Changing target/max FPS, Kitty keyboard, live rendering, syntax highlighting or spinner animation did not move the number.
-**Residual:** real terminals answer capability queries and may behave differently; the TUI is not covered by `bun test`.
-**Re-verify:** run `BENCH_TUI_KEY=x bun script/bench.ts tui` against the release binary on a real terminal-backed PTY and compare with the baseline artifact.
+**Status:** fixed 2026-10-23 · **Severity:** low · **Verified:** 2026-10-23
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/tui/component/logo.tsx` ran an unconditional 16 ms ambient animation timer. Under OpenTUI 0.6 the ~37 ms frame cost saturated the event loop; the marker-based PTY probe measured 34 ms baseline input latency and the old probe up to 100 ms.
+**Fix:** the logo uses a dynamic timer: 60 fps during intro/pointer interaction, 20 fps for ambient effects, and keypresses request an immediate render. Marker-based input latency is 24.5 ms (median of three runs), idle CPU 107 % vs 127 %, TUI RSS 523 vs 624 MB.
+**Residual:** TUI behavior is not covered by `bun test`; the PTY probe and manual `V-S*` scenarios remain the gate.
+**Re-verify:** `bun script/bench.ts tui` with `BENCH_TUI_KEY=zzqx`.
 **Related:** `docs/performance/README.md`, `VERIFICATION.md`.
 
 ### RISK-ACP-01 — ACP 2 write path has no automated protocol test

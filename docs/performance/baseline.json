@@ -1,67 +1,31 @@
 {
   "label": "baseline",
-  "date": "2026-10-23T17:33:34.995Z",
+  "date": "2026-10-23T19:11:06.713Z",
   "platform": "win32-x64",
   "bun": "1.4.4",
   "node": "v26.3.0",
   "binary": "..\\..\\..\\AppData\\Local\\Temp\\axiomsec-baseline\\axiomsec.exe",
   "coldStart": {
     "versionMs": {
-      "min": 384.77,
-      "median": 389.47,
-      "p95": 392.66,
-      "max": 392.66,
-      "mean": 388.63,
-      "samples": 15
+      "median": 383.96
     },
     "helpMs": {
-      "min": 400.88,
-      "median": 408.38,
-      "p95": 531.43,
-      "max": 531.43,
-      "mean": 415.74,
-      "samples": 15
+      "median": 403.87
     }
   },
   "server": {
-    "startupMs": 549.81,
-    "rssAfter3sMb": 161.54,
-    "idleCpuPercent3s": 0.52,
-    "requestsPerSecond": 2337,
-    "errors": 0,
-    "peakRssMb": null,
-    "idleCpuPercent": null,
-    "serverPid": 4996
+    "startupMs": 470.39,
+    "rssAfter3sMb": 160.72,
+    "idleCpuPercent3s": 0,
+    "requestsPerSecond": 2467,
+    "errors": 0
   },
   "tui": {
-    "firstDataMs": 17.48,
-    "firstFrameMs": 17.48,
-    "inputToNextFrameMs": 17.92,
-    "outputBytes": 133486,
-    "peakRssMb": 578.51,
-    "samples": [
-      {
-        "firstDataMs": 17.81,
-        "firstFrameMs": 17.81,
-        "inputToNextFrameMs": 25.56,
-        "outputBytes": 133486,
-        "peakRssMb": 587.79
-      },
-      {
-        "firstDataMs": 8.72,
-        "firstFrameMs": 8.72,
-        "inputToNextFrameMs": 1.6,
-        "outputBytes": 133756,
-        "peakRssMb": 578.51
-      },
-      {
-        "firstDataMs": 17.48,
-        "firstFrameMs": 17.48,
-        "inputToNextFrameMs": 17.92,
-        "outputBytes": 129550,
-        "peakRssMb": 565.09
-      }
-    ]
+    "firstDataMs": 17.42,
+    "firstFrameMs": 17.42,
+    "inputToNextFrameMs": 33.97,
+    "idleCpuPercent": 126.95,
+    "peakRssMb": 624.05
   },
   "sizes": {
     "binaryMb": 134.38,
@@ -69,5 +33,6 @@
     "installedMb": 1640.98,
     "lockfileLines": 2016,
     "binarySha256": "e2015ef86a48be9827f122260fbc908aefb2a06da5d649b5b0299bf291fab5ac"
-  }
+  },
+  "method": "median of 3 full runs; each TUI metric is the median of 3 PTY probes"
 }

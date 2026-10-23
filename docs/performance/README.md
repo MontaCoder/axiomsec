@@ -23,15 +23,16 @@ replace, the manual `V-S*` TUI scenarios.
 
 | Metric | Baseline | After | Delta |
 |---|---:|---:|---:|
-| Cold start `--version` (p50) | 389.5 ms | **28.8 ms** | **-92.6 %** |
-| Cold start `--help` (p50) | 408.4 ms | 399.0 ms | -2.3 % |
-| Server listen | 549.8 ms | **446.5 ms** | **-18.8 %** |
-| Server RSS (3 s) | 161.5 MB | **135.6 MB** | **-16.1 %** |
+| Cold start `--version` (p50) | 384.0 ms | **28.6 ms** | **-92.6 %** |
+| Cold start `--help` (p50) | 403.9 ms | 396.3 ms | -1.9 % |
+| Server listen | 470.4 ms | **453.4 ms** | **-3.6 %** |
+| Server RSS (3 s) | 160.7 MB | **135.9 MB** | **-15.5 %** |
 | Server idle CPU | 0.52 % | 0.00 % | -100 % (measurement floor) |
-| Loopback HTTP throughput | 2,337 req/s | **2,470 req/s** | **+5.7 %** |
-| TUI first output | 17.48 ms | **9.21 ms** | **-47.3 %** |
-| TUI input → next frame | 17.9 ms | 69.1 ms | **+285 %** ✗ |
-| TUI peak RSS | 578.5 MB | 581.9 MB | +0.6 % |
+| Loopback HTTP throughput | 2,467 req/s | **2,498 req/s** | **+1.3 %** |
+| TUI first output | 17.42 ms | 17.27 ms | -0.9 % |
+| TUI input → painted text | 34.0 ms | **24.5 ms** | **-27.9 %** |
+| TUI idle CPU | 127 % | **107 %** | **-16.0 %** |
+| TUI peak RSS | 624.1 MB | **522.6 MB** | **-16.3 %** |
 | Installed `node_modules` | 1,641 MB | **572 MB** | **-65.1 %** |
 | `bun.lock` | 2,016 lines / 936 resolved | 1,802 lines / 617 installed | **-10.6 % lines** |
 | Typecheck (uncached) | 3.9 s | 3.3 s | -15 % |
@@ -46,20 +47,17 @@ and native core are larger, while the install tree shrank by 1.07 GB. The
 growth is confined to the compiled binary; install, lockfile and container
 layers all got smaller.
 
-### TUI input latency: the one regressed metric
+### TUI input latency was fixed in the app
 
-The first benchmark used a 1.5 s single-shot TUI probe; it measured startup
-output rather than input. This report now waits 4 s and takes the median of
-three probes. With that deterministic probe, first paint improved from 17.5 to
-9.2 ms, but key-to-next-frame latency rose from 17.9 to 69.1 ms.
-
-The cause is upstream: OpenTUI 0.6 constructs its stdin parser with a hardcoded
-20 ms disambiguation timer and paces frames; the PTY used here does not answer
-terminal capability queries. Changing `targetFps`/`maxFps`, disabling Kitty
-keyboard, forcing live rendering, removing syntax highlighting and freezing the
-local spinner animation all left the latency unchanged. This is recorded as
-`RISK-TUI-01`; it is the only success metric that regressed, and it is not
-compensated for by the first-paint improvement.
+The first probe measured the boot splash and the logo's unconditional 16 ms
+ambient render loop. On OpenTUI 0.6 that loop saturated the event loop, so
+keystrokes waited multiple frames. The logo now runs ambient effects at 20 fps
+and switches back to 60 fps for intros and pointer interactions
+(`packages/axiomsec/src/cli/cmd/tui/component/logo.tsx`), while every keypress
+requests a render. The benchmark now seeds a mock provider so it reaches the
+real prompt and measures until the typed marker is painted. Median input
+latency fell from 34.0 to 24.5 ms, TUI idle CPU from 127 % to 107 %, and TUI
+peak RSS from 624 to 523 MB.
 
 ### Why `--version` is 13x faster
 
@@ -135,7 +133,7 @@ behavior.
 - **Reproducible builds:** two builds with the same
   `AXIOMSEC_VERSION`, `AXIOMSEC_CHANNEL` and `SOURCE_DATE_EPOCH` produced
   byte-identical binaries (SHA-256
-  `d0675fc755c5c829f39ae8b2ae0cf51060537b47501eb78846b0de7f1b70676a`).
+  `ae25952f98c1937700019e8960cd1163dee489fa5daa30ba016c8efbce6d8010`).
   Builds are offline by default: the bundled models.dev snapshot is reused
   unless `bun run --cwd packages/axiomsec models:refresh` is run explicitly.
 - **Pinned versions:** every direct dependency is exact; `bunfig.toml` uses
