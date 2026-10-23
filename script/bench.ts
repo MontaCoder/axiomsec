@@ -55,6 +55,7 @@ function isoHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "axiomsec-bench-"))
   return {
     dir,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
     env: {
       ...process.env,
       HOME: dir,
@@ -71,7 +72,8 @@ function isoHome() {
 }
 
 function coldStart(bin: string, runs: number) {
-  const env = isoHome().env
+  const home = isoHome()
+  const env = home.env
   for (let i = 0; i < 2; i++) {
     Bun.spawnSync({ cmd: [bin, "--version"], env, stdout: "ignore", stderr: "ignore" })
   }
@@ -87,6 +89,7 @@ function coldStart(bin: string, runs: number) {
     help.push(performance.now() - start)
     if (h.exitCode !== 0) throw new Error("--help failed")
   }
+  home.cleanup()
   return { versionMs: stats(version), helpMs: stats(help) }
 }
 
@@ -149,7 +152,7 @@ async function startServer(bin: string) {
   ])
   if (!url) throw new Error(`server did not print a URL: ${stderr}`)
   const startupMs = performance.now() - started
-  return { proc, url, startupMs, cleanup: () => proc.kill() }
+  return { proc, url, startupMs, cleanup: () => { proc.kill(); home.cleanup() } }
 }
 
 async function load(serverUrl: string) {
@@ -324,6 +327,7 @@ async function tuiProbe(bin: string) {
     try {
       terminal.kill()
     } catch {}
+    home.cleanup()
   }
 }
 
