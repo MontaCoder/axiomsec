@@ -9,7 +9,7 @@ import { Npm } from "../npm"
 import { Hash } from "@axiomsec/shared/util/hash"
 import { Plugin } from "../plugins"
 import { NamedError } from "@axiomsec/shared/util/error"
-import { type LanguageModelV3 } from "@ai-sdk/provider"
+import { type LanguageModelV3, type LanguageModelV4 } from "@ai-sdk/provider"
 import * as ModelsDev from "./models"
 import { Auth } from "../auth"
 import { Env } from "../env"
@@ -98,8 +98,10 @@ function wrapSSE(
   })
 }
 
+type Language = LanguageModelV3 | LanguageModelV4
+
 type BundledSDK = {
-  languageModel(modelId: string): LanguageModelV3
+  languageModel(modelId: string): Language
 }
 
 const BUNDLED_PROVIDERS: Record<string, () => Promise<(opts: any) => BundledSDK>> = {
@@ -863,7 +865,7 @@ export interface Interface {
   readonly list: () => Effect.Effect<Record<ProviderID, Info>>
   readonly getProvider: (providerID: ProviderID) => Effect.Effect<Info>
   readonly getModel: (providerID: ProviderID, modelID: ModelID) => Effect.Effect<Model>
-  readonly getLanguage: (model: Model) => Effect.Effect<LanguageModelV3>
+  readonly getLanguage: (model: Model) => Effect.Effect<Language>
   readonly closest: (
     providerID: ProviderID,
     query: string[],
@@ -873,7 +875,7 @@ export interface Interface {
 }
 
 interface State {
-  models: Map<string, LanguageModelV3>
+  models: Map<string, Language>
   providers: Record<ProviderID, Info>
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
@@ -1005,7 +1007,7 @@ const layer: Layer.Layer<
         const database = mapValues(modelsDev, fromModelsDevProvider)
 
         const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
-        const languages = new Map<string, LanguageModelV3>()
+        const languages = new Map<string, Language>()
         const modelLoaders: {
           [providerID: string]: CustomModelLoader
         } = {}

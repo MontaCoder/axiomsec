@@ -19,6 +19,7 @@ import { Installation } from "@/installer"
 import { InstallationVersion } from "@/installer/version"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
+import { OpenTelemetry } from "@ai-sdk/otel"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -252,7 +253,7 @@ export namespace LLM {
               error,
             })
           },
-          async experimental_repairToolCall(failed) {
+          async repairToolCall(failed) {
             const lower = failed.toolCall.toolName.toLowerCase()
             if (lower !== failed.toolCall.toolName && tools[lower]) {
               l.info("repairing tool call", {
@@ -277,7 +278,10 @@ export namespace LLM {
           topP: params.topP,
           topK: params.topK,
           providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-          activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+          // `invalid` stays parseable so the repair path can materialize a
+          // denied tool call; the model middleware strips it before the
+          // provider request so it is never advertised.
+          activeTools: Object.keys(tools),
           tools,
           toolChoice: input.toolChoice,
           maxOutputTokens: params.maxOutputTokens,
@@ -310,19 +314,25 @@ export namespace LLM {
                     // @ts-expect-error
                     args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
                   }
+                  args.params.tools = args.params.tools?.filter((tool) => tool.name !== "invalid")
                   return args.params
                 },
               },
             ],
           }),
-          experimental_telemetry: {
+          allowSystemInMessages: true,
+          telemetry: {
             isEnabled: cfg.experimental?.openTelemetry,
             functionId: "session.llm",
-            tracer,
-            metadata: {
-              userId: cfg.username ?? "unknown",
-              sessionId: input.sessionID,
-            },
+            integrations: [
+              new OpenTelemetry({
+                tracer,
+                enrichSpan: () => ({
+                  "axiomsec.user.id": cfg.username ?? "unknown",
+                  "axiomsec.session.id": input.sessionID,
+                }),
+              }),
+            ],
           },
         })
       })

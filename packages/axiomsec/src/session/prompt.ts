@@ -353,7 +353,7 @@ At the end of planning, after questions are resolved and the plan file is comple
         const run = yield* runner()
         const promptOps = yield* ops()
 
-        const context = (toolID: string, args: any, options: ToolExecutionOptions): Tool.Context => ({
+        const context = (toolID: string, args: any, options: ToolExecutionOptions<Record<string, unknown>>): Tool.Context => ({
           sessionID: input.session.id,
           abort: options.abortSignal!,
           messageID: input.processor.message.id,

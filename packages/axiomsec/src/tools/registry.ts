@@ -404,6 +404,10 @@ export const layer: Layer.Layer<
         input.agent.permission,
       )
       const filtered = allTools.filter((tool) => {
+        // `invalid` is the repair target for calls to tools the model cannot
+        // see. It is always kept for parsing but never advertised (LLM
+        // filters it out of activeTools) and has no side effects.
+        if (tool.id === InvalidTool.id) return true
         if (denied.has(tool.id)) return false
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           return input.providerID === ProviderID.axiomsec || Flag.AXIOMSEC_ENABLE_EXA

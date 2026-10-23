@@ -28,6 +28,7 @@ import { Effect, Context, Layer } from "effect"
 import { InstanceState } from "@/effect"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
+import { OpenTelemetry } from "@ai-sdk/otel"
 import { isSelectableAgent, isSwitchableAgent } from "./switching"
 
 export namespace Agent {
@@ -517,13 +518,17 @@ export namespace Agent {
           const isOpenaiOauth = model.providerID === "openai" && authInfo?.type === "oauth"
 
           const params = {
-            experimental_telemetry: {
+            telemetry: {
               isEnabled: cfg.experimental?.openTelemetry,
-              tracer,
-              metadata: {
-                userId: cfg.username ?? "unknown",
-              },
+              functionId: "agent.generate",
+              integrations: [
+                new OpenTelemetry({
+                  tracer,
+                  enrichSpan: () => ({ "axiomsec.user.id": cfg.username ?? "unknown" }),
+                }),
+              ],
             },
+            allowSystemInMessages: true,
             temperature: 0.3,
             messages: [
               ...(isOpenaiOauth

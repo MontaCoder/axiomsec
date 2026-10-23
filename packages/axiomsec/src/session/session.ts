@@ -279,10 +279,10 @@ export const getUsage = (input: { model: Provider.Model; usage: LanguageModelUsa
   }
   const inputTokens = safe(input.usage.inputTokens ?? 0)
   const outputTokens = safe(input.usage.outputTokens ?? 0)
-  const reasoningTokens = safe(input.usage.outputTokenDetails?.reasoningTokens ?? input.usage.reasoningTokens ?? 0)
+  const reasoningTokens = safe(input.usage.outputTokenDetails?.reasoningTokens ?? 0)
 
   const cacheReadInputTokens = safe(
-    input.usage.inputTokenDetails?.cacheReadTokens ?? input.usage.cachedInputTokens ?? 0,
+    input.usage.inputTokenDetails?.cacheReadTokens ?? 0,
   )
   const cacheWriteInputTokens = safe(
     (input.usage.inputTokenDetails?.cacheWriteTokens ??
