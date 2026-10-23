@@ -78,5 +78,8 @@
   "trustedDependencies": [
     "bun-pty",
     "esbuild"
-  ]
+  ],
+  "overrides": {
+    "@openrouter/ai-sdk-provider": "3.1.0"
+  }
 }

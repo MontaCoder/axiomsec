@@ -144,7 +144,8 @@
     "@parcel/watcher-linux-x64-musl": "2.6.0",
     "@parcel/watcher-win32-arm64": "2.6.0",
     "@parcel/watcher-win32-x64": "2.6.0",
-    "@ai-sdk/otel": "1.0.151"
+    "@ai-sdk/otel": "1.0.151",
+    "@opentelemetry/api-logs": "0.214.0"
   },
   "overrides": {
     "drizzle-orm": "catalog:"
