@@ -73,6 +73,24 @@ Two rules the harness enforces:
   (`cyber_ledger`, `cyber_fact`) and the workspace files, not against log lines
   or printed output. Output is a projection; the kernel is canonical.
 
+### 3b. What the CLI-level suites own
+
+- `test/security/cli-surface.test.ts` (L3) drives the non-agent command
+  surface: help/version, unknown-command exit status, agent listing, `debug
+  paths`/`rg`/`file`/`scrap`/`skill`, session list and delete, `db
+  path`/query/error, `models` with a known and unknown provider, `mcp list`,
+  stats filters, malformed config, export/replay rejection, `pr` outside a git
+  repository and operation validation.
+- `test/e2e/agent-lifecycle.test.ts` (L4) drives session lifecycle
+  (`--title`, `--continue`, `--session`, `--fork`, `--file`, `--agent`,
+  `--model`, `--command`) and failure recovery (401, an empty stream, an
+  unavailable tool, invalid tool arguments, tool exceptions, an unknown
+  command), asserting on the kernel and on what the model was shown.
+
+Bun's `--coverage` instruments the test process, not the built binary these
+suites spawn, so their evidence is behavioural. Use the L1/L2 coverage report
+for line coverage; use the kernel assertions above for CLI behaviour.
+
 ## 4. Writing a test
 
 **Determinism.** No wall-clock assertions, no real network, no real model. The

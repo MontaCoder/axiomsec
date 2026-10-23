@@ -42,7 +42,7 @@ Use Bun 1.4.4 (the `packageManager` pin); CI installs that version, and a newer 
 
 ## Tests: what is and is not covered
 
-`bun test` runs the tracked suite in `packages/axiomsec/test/` (343 tests: 339 pass, 4 live-provider skips, ~217 s). It is layered — policy, predicate, integration, process and end-to-end — and the layering, the harness and the rules for adding a case are in [TESTING.md](docs/agents/TESTING.md). It is **not** coverage of everything: the TUI, DNS-prefetch/TLS browser paths, ACP transports, real providers, installers and third-party network paths still rely on the manual `V-S*` scenarios in [VERIFICATION.md](docs/agents/VERIFICATION.md). Browser HTTP/WebSocket/WebRTC and service-worker guards run automatically when Chromium is available. Never write "the whole system is tested"; name the layer or scenario you ran.
+`bun test` runs the tracked suite in `packages/axiomsec/test/` (379 tests: 375 pass, 4 live-provider skips, ~272 s). It is layered — policy, predicate, integration, process and end-to-end — and the layering, the harness and the rules for adding a case are in [TESTING.md](docs/agents/TESTING.md). It is **not** coverage of everything: the TUI, DNS-prefetch/TLS browser paths, ACP transports, real providers, installers and third-party network paths still rely on the manual `V-S*` scenarios in [VERIFICATION.md](docs/agents/VERIFICATION.md). Browser HTTP/WebSocket/WebRTC and service-worker guards run automatically when Chromium is available. Never write "the whole system is tested"; name the layer or scenario you ran.
 
 A fix without a test is a fix that comes back. Every defect this series fixed has a matching case, and each layer was proven by reverting a real fix and watching the matching test go red.
 

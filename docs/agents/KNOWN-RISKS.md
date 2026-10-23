@@ -891,6 +891,42 @@ names the test that must go red if the fix is reverted.
 **Re-verify:** `bun pm ls | grep drizzle` and `bun typecheck` after a bump.
 **Related:** `docs/performance/README.md`.
 
+### RISK-CLI-03 — An unknown command printed an error but exited 0
+
+**Status:** fixed 2026-10-23 · **Severity:** low · **Verified:** 2026-10-23
+**Evidence (pre-fix):** a bare argument is the default command's `[project]` positional. `packages/axiomsec/src/cli/cmd/tui/thread.ts:126-130` caught a failed `chdir`, printed "Failed to change directory", and returned without setting an exit status, so `axiomsec frobnicate` exited 0.
+**Fix:** the catch sets `process.exitCode = 1` (`thread.ts:129`).
+**Residual:** a bare argument that names an existing directory still starts the TUI by design; only the failed-directory path is asserted.
+**Re-verify:** run `axiomsec frobnicate` from a directory that has no `frobnicate` child; expect exit 1. Regression: `packages/axiomsec/test/security/cli-surface.test.ts` — "an unknown command reports a failure instead of exiting 0 (RISK-CLI-03)".
+**Related:** `VERIFICATION.md`.
+
+### RISK-CLI-04 — `debug rg files --query` ignored its filter
+
+**Status:** fixed 2026-10-23 · **Severity:** low · **Verified:** 2026-10-23
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/debug/ripgrep.ts:50-68` declared `--query` ("Filter files by query") but passed only `glob` to `Ripgrep.files` and printed the unfiltered stream.
+**Fix:** the collected paths are filtered case-insensitively by `query` before `--limit` is applied (`ripgrep.ts:63-66`).
+**Residual:** the filter is a substring match, not a fuzzy rank; that matches the option's wording.
+**Re-verify:** create two files, run `axiomsec debug rg files --query <one-name>`, and confirm only the matching path prints. Regression: `packages/axiomsec/test/security/cli-surface.test.ts` — "debug rg files honours --query and --limit (RISK-CLI-04)".
+**Related:** `VERIFICATION.md`.
+
+### RISK-CLI-05 — `models <unknown-provider>` exited 0 after printing an error
+
+**Status:** fixed 2026-10-23 · **Severity:** low · **Verified:** 2026-10-23
+**Evidence (pre-fix):** `packages/axiomsec/src/cli/cmd/models.ts:61-64` reported "Provider not found" through `UI.error` and returned from the effect without setting an exit status, so scripts could not distinguish an empty result from a bad provider.
+**Fix:** the branch sets `process.exitCode = 1` (`models.ts:64`).
+**Residual:** none known.
+**Re-verify:** `axiomsec models nosuch; echo $?` returns 1. Regression: `packages/axiomsec/test/security/cli-surface.test.ts` — "models rejects an unknown provider with a non-zero exit (RISK-CLI-05)".
+**Related:** `VERIFICATION.md`.
+
+### RISK-CLI-06 — A missing session on `run --session` produced an unhandled rejection and exit 0
+
+**Status:** fixed 2026-10-23 · **Severity:** medium · **Verified:** 2026-10-23
+**Evidence (pre-fix):** the prompt route in `packages/axiomsec/src/server/instance/session.ts` set status 200 and started a stream before resolving the session, so a missing session rejected inside the already-committed stream. Separately, `packages/axiomsec/src/cli/cmd/run.ts` ignored the SDK's `{ error }` result, so the CLI recorded no session error and exited 0 while Bun printed the rejection and a bundled-source excerpt to stderr.
+**Fix:** the route resolves the session before committing the stream (`session.ts:820-825`), returning the documented 404; `run.ts:682,692` now converts a prompt/command error payload into an error event, and `run.ts:694-707` sets the run error and exit status, suppressing a duplicate when the session loop already reported the same text. The headless CLI therefore exits 1 with `Session not found: <id>` (or `Command not found: "<name>"`).
+**Residual:** post-200 failures inside a valid session still surface through `session.error` events rather than the HTTP status, because the response is already streaming.
+**Re-verify:** `axiomsec run hi --session ses_doesnotexist --format json`; expect exit 1, an `error` event with "Session not found", no `B:/~BUN` dump. Regression: `packages/axiomsec/test/e2e/agent-lifecycle.test.ts` — "an unknown --session fails the run cleanly (RISK-CLI-06)".
+**Related:** `VERIFICATION.md`, `RISK-CI-01`.
+
 ## Leads (not verified)
 
 These are suspicions from code reading, not confirmed facts. Do not cite them as bugs until reproduced.
