@@ -9,7 +9,6 @@ import { Project } from "../../project"
 import { MCP } from "../../mcp"
 import { Session } from "../../session"
 import { AppRuntime } from "../../effect/app-runtime"
-import { zodToJsonSchema } from "zod-to-json-schema"
 import { errors } from "../error"
 import { lazy } from "../../support/lazy"
 import { Effect } from "effect"
@@ -102,7 +101,7 @@ export const ExperimentalRoutes = lazy(() =>
             id: t.id,
             description: t.description,
             // Handle both Zod schemas and plain JSON schemas
-            parameters: (t.parameters as any)?._def ? zodToJsonSchema(t.parameters as any) : t.parameters,
+            parameters: t.parameters instanceof z.ZodType ? z.toJSONSchema(t.parameters) : t.parameters,
           })),
         )
       },
