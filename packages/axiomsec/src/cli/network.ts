@@ -1,6 +1,5 @@
 import type { Argv, InferredOptionTypes } from "yargs"
-import { Config } from "../config"
-import { AppRuntime } from "@/effect/app-runtime"
+import type { Config } from "../config"
 
 const options = {
   port: {
@@ -27,6 +26,7 @@ export function withNetworkOptions<T>(yargs: Argv<T>) {
   return yargs.options(options)
 }
 export async function resolveNetworkOptions(args: NetworkOptions) {
+  const [{ Config }, { AppRuntime }] = await Promise.all([import("../config"), import("@/effect/app-runtime")])
   const config = await AppRuntime.runPromise(Config.Service.use((cfg) => cfg.getGlobal()))
   return resolveNetworkOptionsNoConfig(args, config)
 }

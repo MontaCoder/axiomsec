@@ -185,6 +185,8 @@ export type SnapshotWorkflowStep = {
 
 export type BuildOptions = {
   slug?: string
+  /** Reuse an operation already read by the caller instead of walking it again. */
+  operation?: Operation.Info
   includeDoctor?: boolean
   doctorTimeoutMs?: number
   maxFindings?: number
@@ -436,53 +438,87 @@ function summarizeComponents(facts: Fact[]): SnapshotComponent[] {
     .sort((a, b) => b.time_updated - a.time_updated || a.key.localeCompare(b.key))
 }
 
-function evidenceIndex(input: {
+type EvidenceLinks = Map<string, string[]>
+
+function addLink(index: EvidenceLinks, sha: string, value: string) {
+  const existing = index.get(sha)
+  if (existing) existing.push(value)
+  else index.set(sha, [value])
+}
+
+/**
+ * Link evidence to findings, observations and routes.
+ *
+ * The previous implementation filtered the whole fact/relation arrays once per
+ * evidence entry (O(entries × facts)). Build the reverse index in one pass and
+ * keep the same order, dedupe and sort semantics.
+ */
+export function evidenceIndex(input: {
   entries: EvidenceEntry[]
   facts: Fact[]
   relations: Relation[]
   routes: SnapshotRoute[]
 }): SnapshotEvidence[] {
   const routeKeys = new Set(input.routes.map((route) => route.key))
+  const factFindings: EvidenceLinks = new Map()
+  const factObservations: EvidenceLinks = new Map()
+  const factRoutes: EvidenceLinks = new Map()
+  const replayLabels: EvidenceLinks = new Map()
+  const relationFindings: EvidenceLinks = new Map()
+  const relationObservations: EvidenceLinks = new Map()
+  const relationRoutes: EvidenceLinks = new Map()
+
+  for (const fact of input.facts) {
+    const refs = [...new Set((fact.evidence_refs ?? []).map(normalizeEvidenceRef))]
+    if (fact.entity_kind === "finding" || fact.entity_kind === "finding_candidate") {
+      for (const sha of refs) addLink(factFindings, sha, fact.entity_key)
+    }
+    if (fact.entity_kind === "http_route") {
+      for (const sha of refs) addLink(factRoutes, sha, fact.entity_key)
+    }
+    if (fact.entity_kind === "finding" && fact.fact_name === "replay_bundle") {
+      for (const sha of refs) addLink(replayLabels, sha, fact.entity_key)
+    }
+    if (fact.entity_kind === "observation" && fact.fact_name === "record") {
+      const value = asObject(fact.value_json)
+      const valueEvidence = Array.isArray(value?.evidence)
+        ? value.evidence.map((item) => normalizeEvidenceRef(String(item)))
+        : []
+      for (const sha of new Set([...valueEvidence, ...refs])) {
+        addLink(factObservations, sha, fact.entity_key)
+      }
+    }
+  }
+
+  for (const relation of input.relations) {
+    const evidence = [...new Set((relation.evidence_refs ?? []).map(normalizeEvidenceRef))]
+    const touches = new Set([normalizeEvidenceRef(relation.src_key), normalizeEvidenceRef(relation.dst_key)])
+    if (relation.src_kind === "finding" || relation.dst_kind === "finding") {
+      const key = relation.src_kind === "finding" ? relation.src_key : relation.dst_key
+      for (const sha of touches) addLink(relationFindings, sha, key)
+    }
+    if (relation.src_kind === "observation" || relation.dst_kind === "observation") {
+      const key = relation.src_kind === "observation" ? relation.src_key : relation.dst_key
+      for (const sha of touches) addLink(relationObservations, sha, key)
+    }
+    const keys = [relation.src_key, relation.dst_key].filter((key) => routeKeys.has(key))
+    for (const sha of evidence) {
+      for (const key of keys) addLink(relationRoutes, sha, key)
+    }
+  }
+
   return input.entries
     .map((entry) => {
       const sha = normalizeEvidenceRef(entry.sha256)
-      const linkedFindingKeys = input.facts
-        .filter((fact) => (fact.evidence_refs ?? []).map(normalizeEvidenceRef).includes(sha))
-        .filter((fact) => fact.entity_kind === "finding" || fact.entity_kind === "finding_candidate")
-        .map((fact) => fact.entity_key)
-      const linkedObservationIds = input.facts
-        .filter((fact) => fact.entity_kind === "observation" && fact.fact_name === "record")
-        .filter((fact) => {
-          const value = asObject(fact.value_json)
-          const valueEvidence = Array.isArray(value?.evidence) ? value.evidence.map((item) => normalizeEvidenceRef(String(item))) : []
-          return valueEvidence.includes(sha) || (fact.evidence_refs ?? []).map(normalizeEvidenceRef).includes(sha)
-        })
-        .map((fact) => fact.entity_key)
-      const relationFindingKeys = input.relations
-        .filter((relation) => normalizeEvidenceRef(relation.dst_key) === sha || normalizeEvidenceRef(relation.src_key) === sha)
-        .filter((relation) => relation.src_kind === "finding" || relation.dst_kind === "finding")
-        .map((relation) => (relation.src_kind === "finding" ? relation.src_key : relation.dst_key))
-      const relationObservationIds = input.relations
-        .filter((relation) => normalizeEvidenceRef(relation.dst_key) === sha || normalizeEvidenceRef(relation.src_key) === sha)
-        .filter((relation) => relation.src_kind === "observation" || relation.dst_kind === "observation")
-        .map((relation) => (relation.src_kind === "observation" ? relation.src_key : relation.dst_key))
-      const linkedRoutes = input.facts
-        .filter((fact) => fact.entity_kind === "http_route")
-        .filter((fact) => (fact.evidence_refs ?? []).map(normalizeEvidenceRef).includes(sha))
-        .map((fact) => fact.entity_key)
-      const relationRoutes = input.relations
-        .filter((relation) => (relation.evidence_refs ?? []).map(normalizeEvidenceRef).includes(sha))
-        .flatMap((relation) => [relation.src_key, relation.dst_key].filter((key) => routeKeys.has(key)))
-      const replayLabels = input.facts
-        .filter((fact) => fact.entity_kind === "finding" && fact.fact_name === "replay_bundle")
-        .filter((fact) => (fact.evidence_refs ?? []).map(normalizeEvidenceRef).includes(sha))
-        .map((fact) => fact.entity_key)
       return {
         ...entry,
-        linked_finding_keys: unique([...linkedFindingKeys, ...relationFindingKeys]),
-        linked_observation_ids: unique([...linkedObservationIds, ...relationObservationIds]),
-        linked_routes: unique([...linkedRoutes, ...relationRoutes]),
-        replay_labels: unique(replayLabels),
+        linked_finding_keys: unique([...(factFindings.get(sha) ?? []), ...(relationFindings.get(sha) ?? [])]),
+        linked_observation_ids: unique([
+          ...(factObservations.get(sha) ?? []),
+          ...(relationObservations.get(sha) ?? []),
+        ]),
+        linked_routes: unique([...(factRoutes.get(sha) ?? []), ...(relationRoutes.get(sha) ?? [])]),
+        replay_labels: unique(replayLabels.get(sha) ?? []),
       }
     })
     .sort((a, b) => b.at - a.at)
@@ -895,7 +931,11 @@ function snapshotCounts(input: {
 }
 
 export async function build(workspace: string, options: BuildOptions = {}): Promise<OperationSnapshot> {
-  const active = options.slug ? await Operation.read(workspace, options.slug).catch(() => undefined) : await Operation.active(workspace).catch(() => undefined)
+  const active =
+    options.operation ??
+    (options.slug
+      ? await Operation.read(workspace, options.slug).catch(() => undefined)
+      : await Operation.active(workspace).catch(() => undefined))
   const generatedAt = new Date()
   const includeDoctor = options.includeDoctor === true
   const doctorTimeoutMs = options.doctorTimeoutMs ?? 5_000

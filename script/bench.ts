@@ -325,7 +325,7 @@ async function tuiProbe(bin: string) {
     const latency = await next
     const inputLatencyMs = latency ? latency - beforeInput : 0
     const peakRss = rss.length ? Math.max(...rss) : 0
-    if (process.env.BENCH_TUI_OUT) Bun.write(process.env.BENCH_TUI_OUT, captured)
+    if (process.env.BENCH_TUI_OUT) await Bun.write(process.env.BENCH_TUI_OUT, captured)
     return {
       firstDataMs: round(firstData),
       firstFrameMs: round(firstFrame),
@@ -337,6 +337,262 @@ async function tuiProbe(bin: string) {
     }
   } finally {
     clearInterval(sampler)
+    try {
+      terminal.write("\x03")
+      await Bun.sleep(300)
+    } catch {}
+    try {
+      terminal.kill()
+    } catch {}
+    await home.cleanup()
+  }
+}
+
+const STREAM_CHUNKS = 300
+const STREAM_DELAY_MS = 8
+
+function streamProvider() {
+  let requests = 0
+  let finish: (() => void) | undefined
+  const done = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      const body = (await request.json().catch(() => ({}))) as {
+        messages?: Array<{ role?: string; content?: unknown }>
+      }
+      const messages = body.messages ?? []
+      const system = messages.find((message) => message.role === "system")
+      const systemText = typeof system?.content === "string" ? system.content : ""
+      const encoder = new TextEncoder()
+      const send = (controller: ReadableStreamDefaultController<Uint8Array>, value: unknown) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(value)}\n\n`))
+
+      if (/title generator|thread title/i.test(systemText)) {
+        const sse =
+          `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: "stream session" }, finish_reason: null }] })}\n\n` +
+          `data: ${JSON.stringify({ id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } })}\n\n` +
+          "data: [DONE]\n\n"
+        return new Response(sse, { headers: { "content-type": "text/event-stream" } })
+      }
+
+      requests += 1
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            send(controller, {
+              id: "1",
+              object: "chat.completion.chunk",
+              choices: [{ index: 0, delta: { role: "assistant", content: "stream " }, finish_reason: null }],
+            })
+            for (let index = 0; index < STREAM_CHUNKS; index++) {
+              await Bun.sleep(STREAM_DELAY_MS)
+              send(controller, {
+                id: "1",
+                object: "chat.completion.chunk",
+                choices: [{ index: 0, delta: { content: `chunk${index} ` }, finish_reason: null }],
+              })
+            }
+            send(controller, {
+              id: "1",
+              object: "chat.completion.chunk",
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              usage: { prompt_tokens: 10, completion_tokens: STREAM_CHUNKS, total_tokens: STREAM_CHUNKS + 10 },
+            })
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+          } finally {
+            controller.close()
+            finish?.()
+          }
+        },
+      })
+      return new Response(stream, { headers: { "content-type": "text/event-stream" } })
+    },
+  })
+  return {
+    baseURL: `http://127.0.0.1:${server.port}/v1`,
+    done,
+    requests: () => requests,
+    close: () => server.stop(true),
+  }
+}
+
+function seedTuiOperation(directory: string) {
+  const opRoot = path.join(directory, ".axiomsec", "operation", "bench-op")
+  const cyberDir = path.join(opRoot, "cyber")
+  const evidenceDir = path.join(opRoot, "evidence")
+  fs.mkdirSync(path.join(opRoot, "context"), { recursive: true })
+  fs.mkdirSync(cyberDir, { recursive: true })
+  fs.mkdirSync(evidenceDir, { recursive: true })
+  fs.writeFileSync(path.join(directory, ".axiomsec", "operation", "active"), "bench-op")
+  fs.writeFileSync(path.join(opRoot, "context", "active-context.md"), "# Active Operation Context\ngenerated_at: bench\n")
+  const facts = Array.from({ length: 500 }, (_, index) => ({
+    id: `cfact_${index}`,
+    project_id: "bench",
+    operation_slug: "bench-op",
+    entity_kind: index % 5 === 0 ? "finding" : index % 3 === 0 ? "http_route" : "host",
+    entity_key: `entity-${index}`,
+    fact_name: "observed",
+    value_json: { title: `entity ${index}`, status: "observed" },
+    writer_kind: "tool",
+    status: "observed",
+    confidence: 1000,
+    source_event_id: null,
+    evidence_refs: [`sha256:${(index % 200).toString(16).padStart(64, "0")}`],
+    expires_at: null,
+    time_created: index,
+    time_updated: index,
+  }))
+  const relations = facts.slice(0, 200).map((item, index) => ({
+    id: `crel_${index}`,
+    project_id: "bench",
+    operation_slug: "bench-op",
+    src_kind: "finding",
+    src_key: item.entity_key,
+    relation: "observed_at",
+    dst_kind: "http_route",
+    dst_key: `entity-${index + 1}`,
+    writer_kind: "tool",
+    status: "observed",
+    confidence: 1000,
+    source_event_id: null,
+    evidence_refs: item.evidence_refs,
+    time_created: index,
+    time_updated: index,
+  }))
+  fs.writeFileSync(path.join(cyberDir, "facts.jsonl"), facts.map((item) => JSON.stringify(item)).join("\n") + "\n")
+  fs.writeFileSync(
+    path.join(cyberDir, "relations.jsonl"),
+    relations.map((item) => JSON.stringify(item)).join("\n") + "\n",
+  )
+  fs.writeFileSync(
+    path.join(cyberDir, "ledger.jsonl"),
+    facts
+      .slice(0, 100)
+      .map((item) =>
+        JSON.stringify({
+          id: `cled_${item.id}`,
+          project_id: "bench",
+          operation_slug: "bench-op",
+          kind: "tool.completed",
+          source: "bench",
+          status: "completed",
+          summary: "synthetic ledger event",
+          data: { tool: "bench" },
+          time_created: item.time_created,
+        }),
+      )
+      .join("\n") + "\n",
+  )
+  fs.writeFileSync(
+    path.join(evidenceDir, "manifest.jsonl"),
+    Array.from({ length: 200 }, (_, index) =>
+      JSON.stringify({
+        sha256: index.toString(16).padStart(64, "0"),
+        ext: "txt",
+        size: 128,
+        mime: "text/plain",
+        label: `artifact ${index}`,
+        source: "bench",
+        at: index,
+      }),
+    ).join("\n") + "\n",
+  )
+}
+
+async function streamProbe(bin: string) {
+  const home = isoHome()
+  seedTuiOperation(home.dir)
+  const provider = streamProvider()
+  const config = {
+    model: "mock/mock-model",
+    provider: {
+      mock: {
+        id: "mock",
+        name: "Mock",
+        env: ["MOCK_API_KEY"],
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: provider.baseURL, apiKey: "mock" },
+        models: {
+          "mock-model": {
+            name: "Mock",
+            tool_call: true,
+            limit: { context: 8192, output: 1024 },
+            cost: { input: 0, output: 0 },
+          },
+        },
+      },
+    },
+  }
+  Object.assign(home.env, { AXIOMSEC_CONFIG_CONTENT: JSON.stringify(config), MOCK_API_KEY: "mock" })
+  const terminal = spawnPty(bin, [], {
+    name: "xterm-256color",
+    cols: 120,
+    rows: 40,
+    cwd: home.dir,
+    env: home.env,
+  })
+  let captured = ""
+  let pending: ((value: number) => void) | undefined
+  let markerWaiter: { marker: string; from: number; resolve: (value: number) => void } | undefined
+  let firstFrame = 0
+  const started = performance.now()
+  terminal.onData((data) => {
+    captured += data
+    if (!firstFrame && data.includes("\x1b[")) firstFrame = performance.now() - started
+    if (markerWaiter && captured.slice(markerWaiter.from).includes(markerWaiter.marker)) {
+      const waiter = markerWaiter
+      markerWaiter = undefined
+      waiter.resolve(performance.now())
+    }
+    const resolve = pending
+    pending = undefined
+    resolve?.(performance.now())
+  })
+  const waitForData = (timeoutMs: number) =>
+    new Promise<number>((resolve) => {
+      pending = resolve
+      setTimeout(() => resolve(0), timeoutMs)
+    })
+  const waitForMarker = (marker: string, timeoutMs: number) =>
+    new Promise<number>((resolve) => {
+      markerWaiter = { marker, from: captured.length, resolve }
+      setTimeout(() => resolve(0), timeoutMs)
+    })
+  try {
+    await waitForData(20_000)
+    if (!firstFrame) throw new Error("TUI did not render a frame")
+    await Bun.sleep(4_000)
+    const before = await processMetrics(terminal.pid)
+    const sentAt = performance.now()
+    for (const char of "go") {
+      terminal.write(char)
+      await Bun.sleep(60)
+    }
+    await Bun.sleep(1_000)
+    terminal.write(process.env.BENCH_TUI_SUBMIT ?? "\r")
+    // A workspace with an existing operation opens the operation picker on the
+    // first Enter; the second confirms the default choice and submits.
+    await Bun.sleep(1_000)
+    terminal.write(process.env.BENCH_TUI_SUBMIT ?? "\r")
+    const waitMs = Number(process.env.BENCH_STREAM_WAIT_MS ?? 20_000)
+    const firstTokenAt = await waitForMarker("chunk0", waitMs)
+    if (process.env.BENCH_TUI_OUT) await Bun.write(process.env.BENCH_TUI_OUT, captured)
+    await Promise.race([provider.done, Bun.sleep(waitMs)])
+    const elapsed = (performance.now() - sentAt) / 1000
+    const after = await processMetrics(terminal.pid)
+    return {
+      streamMs: round(elapsed * 1000),
+      firstTokenMs: firstTokenAt ? round(firstTokenAt - sentAt) : 0,
+      cpuPercent: round(((after.cpuSeconds - before.cpuSeconds) / elapsed) * 100),
+      outputBytes: captured.length,
+      providerRequests: provider.requests(),
+    }
+  } finally {
+    provider.close()
     try {
       terminal.write("\x03")
       await Bun.sleep(300)
@@ -455,6 +711,10 @@ if (argv[0] === "compare") {
 } else if (argv[0] === "tui") {
   const bin = resolveBinary()
   const samples = [await tuiProbe(bin), await tuiProbe(bin), await tuiProbe(bin)]
+  console.log(JSON.stringify(samples, null, 2))
+} else if (argv[0] === "stream") {
+  const bin = resolveBinary()
+  const samples = [await streamProbe(bin), await streamProbe(bin), await streamProbe(bin)]
   console.log(JSON.stringify(samples, null, 2))
 } else {
   const labelIndex = argv.indexOf("--label")

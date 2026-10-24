@@ -45,6 +45,31 @@ export function shouldRefreshOperationConsoleSnapshotForPart(part: OperationCons
   return part.state?.status === "completed" || part.state?.status === "error"
 }
 
+/**
+ * The SDK session type does not expose the server-side `operationSlug` field
+ * yet; the runtime event still carries it. Keep the cast in one place.
+ */
+export function sessionOperationSlug(info: unknown): string | null | undefined {
+  if (!info || typeof info !== "object") return undefined
+  const slug = (info as { operationSlug?: unknown }).operationSlug
+  return typeof slug === "string" || slug === null ? slug : undefined
+}
+
+/**
+ * Streaming text/reasoning deltas cannot change operation facts, evidence or
+ * workflow state, so `session.status` must not rebuild the operation console.
+ * Only an operation attach/detach changes what the snapshot should show.
+ */
+export function shouldRefreshOperationConsoleSnapshotForSession(input: {
+  sessionID?: string
+  currentSessionID?: string
+  previousSlug?: string | null
+  nextSlug?: string | null
+}) {
+  if (input.currentSessionID && input.sessionID !== input.currentSessionID) return false
+  return (input.nextSlug ?? undefined) !== (input.previousSlug ?? undefined)
+}
+
 export function stabilizeOperationConsoleSnapshot(
   previous: OperationConsoleSnapshot | undefined,
   next: OperationConsoleSnapshot | undefined,

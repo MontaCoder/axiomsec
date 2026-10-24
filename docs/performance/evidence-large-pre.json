@@ -1,0 +1,13 @@
+{
+  "label": "evidence-large-pre",
+  "date": "2026-10-24",
+  "note": "Measured before the streaming writer and bounded previews with a 64 MB sparse file via the same Evidence.put/get path. put/get are single calls, not p50 samples; RSS is process.memoryUsage().rss. The preview case is not separate because the old get always read the whole artifact.",
+  "sizeBytes": 67108864,
+  "putMs": 140,
+  "fullGetMs": 42,
+  "rssBeforeMb": 83,
+  "rssAfterPutMb": 150,
+  "rssAfterFullGetMb": 279,
+  "putRssDeltaMb": 67,
+  "fullGetRssDeltaMb": 129
+}

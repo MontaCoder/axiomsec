@@ -1,20 +1,18 @@
 import { cmd } from "@/cli/cmd/cmd"
-import { tui } from "./app"
-import { Rpc } from "@/support"
+import * as Rpc from "@/support/rpc"
 import { type rpc } from "./worker"
 import path from "path"
 import { fileURLToPath } from "url"
 import { UI } from "@/cli/ui"
-import { Log } from "@/support"
+import * as Log from "@/support/log"
 import { errorMessage } from "@/support/error"
 import { withTimeout } from "@/support/timeout"
 import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network"
-import { Filesystem } from "@/support"
+import * as Filesystem from "@/support/filesystem"
 import type { GlobalEvent } from "@axiomsec/sdk/v2"
 import type { EventSource } from "./context/sdk"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
-import { TuiConfig } from "./config/tui"
 
 declare global {
   const AXIOMSEC_WORKER_PATH: string
@@ -177,6 +175,7 @@ export const TuiThreadCommand = cmd({
       }
 
       const prompt = await input(args.prompt)
+      const { TuiConfig } = await import("./config/tui")
       const config = await TuiConfig.get()
 
       const network = resolveNetworkOptionsNoConfig(args)
@@ -203,6 +202,7 @@ export const TuiThreadCommand = cmd({
       }, 1000).unref?.()
 
       try {
+        const { tui } = await import("./app")
         await tui({
           url: transport.url,
           async onSnapshot() {

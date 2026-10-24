@@ -24,6 +24,7 @@ import { DialogProvider as DialogProviderList } from "@tui/component/dialog-prov
 import { ErrorComponent } from "@tui/component/error-component"
 import { PluginRouteMissing } from "@tui/component/plugin-route-missing"
 import { ProjectProvider } from "@tui/context/project"
+import { OperationConsoleProvider } from "@tui/context/operation-console"
 import { useEvent } from "@tui/context/event"
 import { SDKProvider, useSDK } from "@tui/context/sdk"
 import { StartupLoading } from "@tui/component/startup-loading"
@@ -162,8 +163,9 @@ export function tui(input: {
                         events={input.events}
                       >
                         <ProjectProvider>
-                          <SyncProvider>
-                            <ThemeProvider mode={mode}>
+                          <OperationConsoleProvider>
+                            <SyncProvider>
+                              <ThemeProvider mode={mode}>
                               <LocalProvider>
                                 <KeybindProvider>
                                   <PromptStashProvider>
@@ -182,7 +184,8 @@ export function tui(input: {
                                 </KeybindProvider>
                               </LocalProvider>
                             </ThemeProvider>
-                          </SyncProvider>
+                            </SyncProvider>
+                          </OperationConsoleProvider>
                         </ProjectProvider>
                       </SDKProvider>
                     </TuiConfigProvider>

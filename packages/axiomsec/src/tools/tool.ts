@@ -268,7 +268,9 @@ function refreshDerivedContext(workspace: string, slug?: string) {
     )
     if (!active) return false
     const snapshot = yield* Effect.promise(() =>
-      OperationSnapshot.build(workspace, { slug: active.slug, includeDoctor: false }).catch(() => undefined),
+      OperationSnapshot.build(workspace, { slug: active.slug, operation: active, includeDoctor: false }).catch(
+        () => undefined,
+      ),
     )
     if (!snapshot) return false
     const derived = OperationSnapshot.renderContext(snapshot, { mode: "write_context" })

@@ -1,0 +1,50 @@
+{
+  "fixture": {
+    "facts": 2000,
+    "relations": 2000,
+    "evidence": 500,
+    "workflow_steps": 10
+  },
+  "operationRead": {
+    "p50": 1.06,
+    "p95": 1.32,
+    "min": 0.93,
+    "max": 1.88,
+    "samples": 30
+  },
+  "evidenceList": {
+    "p50": 0.52,
+    "p95": 0.73,
+    "min": 0.43,
+    "max": 0.99,
+    "samples": 30
+  },
+  "snapshotBuild": {
+    "p50": 13.59,
+    "p95": 22.37,
+    "min": 12.73,
+    "max": 22.37,
+    "samples": 15
+  },
+  "workflowSync": {
+    "p50": 26.62,
+    "p95": 31.72,
+    "min": 22.65,
+    "max": 31.72,
+    "samples": 10
+  },
+  "largeEvidence": {
+    "sizeMb": 64,
+    "putMs": 158.85,
+    "previewMs": 2.83,
+    "verifyMs": 130.44,
+    "fullGetMs": 24.51,
+    "rssPutDeltaMb": 21.18,
+    "rssPreviewDeltaMb": 0.44,
+    "rssVerifyDeltaMb": -4.19,
+    "rssFullDeltaMb": 64.09,
+    "verified": true,
+    "previewBytes": 4000,
+    "fullBytes": 67108864
+  }
+}

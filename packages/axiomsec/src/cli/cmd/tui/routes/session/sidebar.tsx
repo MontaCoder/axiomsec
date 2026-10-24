@@ -7,6 +7,10 @@ import { TuiPluginRuntime } from "../../plugin"
 import { BRAND } from "../../component/glyph"
 import { Operation } from "@/core/operation"
 import * as OperationResolver from "@/core/operation/resolver"
+import {
+  sessionOperationSlug,
+  shouldRefreshOperationConsoleSnapshotForSession,
+} from "@tui/component/operation-lens/snapshot"
 import { useEvent } from "@tui/context/event"
 
 import { getScrollAcceleration } from "../../util/scroll"
@@ -27,11 +31,22 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     if (!resolved?.slug) return undefined
     return Operation.read(directory, resolved.slug).catch(() => undefined)
   })
+  let sessionSlug = sessionOperationSlug(session())
   const offIdle = event.on("session.idle", () => refresh())
-  const offStatus = event.on("session.status", () => refresh())
+  const offUpdated = event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: props.sessionID,
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (evt.properties.sessionID === props.sessionID) sessionSlug = next
+    if (shouldRefresh) refresh()
+  })
   onCleanup(() => {
     offIdle()
-    offStatus()
+    offUpdated()
   })
 
   return (

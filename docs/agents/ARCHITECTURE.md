@@ -46,7 +46,8 @@ All surfaces converge on the session loop, tool registry, and cyber kernel. Ther
 ## 3. Boot and instruction loading
 
 - CLI entry: `packages/axiomsec/src/index.ts` answers `--version` before loading the graph, then dynamically imports `packages/axiomsec/src/main.ts` (yargs). Commands that need project state call `bootstrap` (`packages/axiomsec/src/cli/bootstrap.ts:5-18`), which wraps work in `Instance.provide` and `InstanceBootstrap`.
-- `main.ts` resolves the invoked command with a metadata-only yargs probe (`packages/axiomsec/src/cli/commands.ts`) and imports only that command's module. Global help renders from the same metadata plus the shared TUI options (`packages/axiomsec/src/cli/cmd/tui/options.ts`); completion still loads the full registry for nested suggestions.
+- `main.ts` registers a metadata-only lazy command table (`packages/axiomsec/src/cli/command-registry.ts`); yargs calls the matched command's async builder, which imports that command's module, and global help renders from the registry plus the default TUI definition. The TUI app/config imports are deferred to the TUI and attach handlers.
+- TUI operation views coalesce snapshot loads through a per-app 150 ms loader (`packages/axiomsec/src/cli/cmd/tui/context/operation-console.tsx`); they refresh on idle, completed/errored tools and operation attach/detach, not on every streamed status delta.
 - `Instance` caches one context per canonical directory and restores it with AsyncLocalStorage (`packages/axiomsec/src/project/instance.ts:57-75`). `InstanceBootstrap` initializes plugins, then formatter, file, watcher, VCS, and snapshot services (`packages/axiomsec/src/project/bootstrap.ts:14-34`).
 - Services are wired through one Effect layer and shared runtime in `packages/axiomsec/src/effect/app-runtime.ts`; per-project service state uses `InstanceState` (`packages/axiomsec/src/effect/instance-state.ts`).
 - Instruction files (`packages/axiomsec/src/session/instruction.ts`):
@@ -99,7 +100,7 @@ Operation creation writes initial facts/ledger/relations with whole-file writes 
 
 ## 6. Evidence, replay, findings, reports
 
-- **Evidence**: `<sha256>.<ext>` plus append-only `manifest.jsonl` (`packages/axiomsec/src/core/evidence/store.ts:17`, `:55-103`). `get` returns the manifest entry and bytes but does not re-hash them.
+- **Evidence**: `<sha256>.<ext>` plus append-only `manifest.jsonl` (`packages/axiomsec/src/core/evidence/store.ts:17`, `:55-103`). `get` returns the manifest entry and bytes but does not re-hash them. Previews honor `maxBytes`; file inputs over 16 MB stream to a temp file while hashing; read-only manifest lookups and listings use stat-stable reads, writes stay locked, and `verify` streams the artifact through SHA-256 instead of loading it.
 - **Replay**: `axiomsec/1` header/event/trailer; trailer carries `sha256_body` and an optional signature (`packages/axiomsec/src/core/replay/format.ts:7-42`). CLI `verify` checks the body hash only; signature verification is not implemented (`packages/axiomsec/src/cli/cmd/replay.ts:93-113`).
 - **Findings**: promotion requires independent evidence — a ref that resolves and re-hashes through `Evidence.verify` — plus replay or a structured, domain-valid exemption (`packages/axiomsec/src/core/cyber/oracle.ts:66-133`). The replay artifact is tracked separately and never counts as evidence. Reportability is defined at `packages/axiomsec/src/core/cyber/finding.ts:189-194`; rejected/stale claims remain visible and candidates are bucketed separately from suspected findings.
 - **Reports**: deliverable bundles contain `report.md`, `report.json`, `manifest.json`, and `manifest.sha256` (`packages/axiomsec/src/core/deliverable/build.ts:422-596`).

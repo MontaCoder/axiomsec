@@ -2,13 +2,15 @@ import { createMemo, createResource, createSignal, onCleanup, Show } from "solid
 import { useProject } from "@tui/context/project"
 import { useTheme } from "@tui/context/theme"
 import { useEvent } from "@tui/context/event"
+import { useOperationConsoleLoader } from "@tui/context/operation-console"
 import { type OperationKind } from "@/core/operation"
 import {
-  loadOperationConsoleSnapshot,
   replayCoveredCount,
   reportStatus,
   scopeDecision,
+  sessionOperationSlug,
   shouldRefreshOperationConsoleSnapshotForPart,
+  shouldRefreshOperationConsoleSnapshotForSession,
   stabilizeOperationConsoleSnapshot,
   type OperationConsoleSnapshot,
 } from "@tui/feature-plugins/sidebar/operation-console"
@@ -39,6 +41,7 @@ function relativeAge(ms: number): string {
 export function OperationBanner(props: { sessionID?: string } = {}) {
   const project = useProject()
   const event = useEvent()
+  const loadSnapshot = useOperationConsoleLoader()
   const { theme } = useTheme()
   // Boolean-flip tick: only two distinct source values, so createResource can never
   // stack dozens of in-flight fetches with fresh source identities.
@@ -57,7 +60,7 @@ export function OperationBanner(props: { sessionID?: string } = {}) {
     try {
       const dir = project.instance.directory()
       if (!dir) return undefined
-      const next = await loadOperationConsoleSnapshot(dir, { sessionID: props.sessionID })
+      const next = await loadSnapshot(dir, { sessionID: props.sessionID })
       stableSnapshot = stabilizeOperationConsoleSnapshot(stableSnapshot, next)
       return stableSnapshot
     } finally {
@@ -71,15 +74,29 @@ export function OperationBanner(props: { sessionID?: string } = {}) {
   const snapshot = createMemo(() => info() ?? stableSnapshot)
   const active = createMemo(() => snapshot()?.active)
 
+  let sessionSlug: string | null | undefined
   const offIdle = event.on("session.idle", () => refresh())
   const offPart = event.on("message.part.updated", (evt) => {
     if (shouldRefreshOperationConsoleSnapshotForPart(evt.properties.part)) refresh()
   })
-  const offStatus = event.on("session.status", () => refresh())
+  const offUpdated = event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: props.sessionID,
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (!props.sessionID || evt.properties.sessionID === props.sessionID) sessionSlug = next
+    if (shouldRefresh) {
+      loadSnapshot.clear()
+      refresh()
+    }
+  })
   onCleanup(() => {
     offIdle()
     offPart()
-    offStatus()
+    offUpdated()
   })
 
   return (

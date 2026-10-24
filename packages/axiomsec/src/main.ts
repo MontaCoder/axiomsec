@@ -1,39 +1,15 @@
 import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
-import { RunCommand } from "./cli/cmd/run"
-import { GenerateCommand } from "./cli/cmd/generate"
-import { Log } from "./support"
-import { ProvidersCommand } from "./cli/cmd/providers"
-import { AgentCommand } from "./cli/cmd/agent"
-import { UpgradeCommand } from "./cli/cmd/upgrade"
-import { UninstallCommand } from "./cli/cmd/uninstall"
-import { ModelsCommand } from "./cli/cmd/models"
+import { commands } from "./cli/command-registry"
+import * as Log from "./support/log"
 import { UI } from "./cli/ui"
-import { Installation } from "./installer"
-import { InstallationVersion } from "./installer/version"
+import { InstallationLocal, InstallationVersion } from "./installer/version"
 import { NamedError } from "@axiomsec/shared/util/error"
 import { FormatError } from "./cli/error"
-import { ServeCommand } from "./cli/cmd/serve"
-import { Filesystem } from "./support"
-import { DebugCommand } from "./cli/cmd/debug"
-import { StatsCommand } from "./cli/cmd/stats"
-import { McpCommand } from "./cli/cmd/mcp"
-import { ExportCommand } from "./cli/cmd/export"
-import { ReplayCommand } from "./cli/cmd/replay"
-import { AttachCommand } from "./cli/cmd/tui/attach"
-import { TuiThreadCommand } from "./cli/cmd/tui/thread"
-import { AcpCommand } from "./cli/cmd/acp"
+import * as Filesystem from "./support/filesystem"
 import { EOL } from "os"
-import { PrCommand } from "./cli/cmd/pr"
-import { SessionCommand } from "./cli/cmd/session"
-import { OperationCommand } from "./cli/cmd/operation"
-import { DbCommand } from "./cli/cmd/db"
-import { JsonMigration } from "./storage"
-import { Database } from "./storage"
 import { errorMessage } from "./support/error"
-import { PluginCommand } from "./cli/cmd/plugin"
 import { Heap } from "./cli/heap"
-import { drizzle } from "drizzle-orm/bun-sqlite"
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {
@@ -59,6 +35,17 @@ function show(out: string) {
   process.stderr.write(out)
 }
 
+const commandNames = new Set<string>()
+for (const command of commands) {
+  const name = String(command.command).split(/\s+/)[0]
+  if (name && !name.startsWith("$") && name !== "*") commandNames.add(name)
+  if (command.aliases) {
+    for (const alias of Array.isArray(command.aliases) ? command.aliases : [command.aliases]) {
+      commandNames.add(alias)
+    }
+  }
+}
+
 const cli = yargs(args)
   .parserConfiguration({ "populate--": true })
   .scriptName("axiomsec")
@@ -81,16 +68,20 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    // Help only renders the command table. Do not create logs, scan for a
+    // database, or run the one-time migration for it.
+    if (opts.help || args.includes("-h") || args.includes("--help")) return
+
     if (opts.pure) {
       process.env.AXIOMSEC_PURE = "1"
     }
 
     await Log.init({
       print: process.argv.includes("--print-logs"),
-      dev: Installation.isLocal(),
+      dev: InstallationLocal,
       level: (() => {
         if (opts.logLevel) return opts.logLevel as Log.Level
-        if (Installation.isLocal()) return "DEBUG"
+        if (InstallationLocal) return "DEBUG"
         return "INFO"
       })(),
     })
@@ -111,8 +102,10 @@ const cli = yargs(args)
     // path: a hardcoded `Global.Path.data/axiomsec.db` missed the channel
     // suffix and `AXIOMSEC_DB`, so the migration re-ran on every command.
     // (RISK-PERSIST-06)
+    const { Database } = await import("./storage")
     const marker = Database.Path
     if (marker !== ":memory:" && !(await Filesystem.exists(marker))) {
+      const [{ JsonMigration }, { drizzle }] = await Promise.all([import("./storage"), import("drizzle-orm/bun-sqlite")])
       const tty = process.stderr.isTTY
       process.stderr.write("Performing one time database migration, may take a few minutes..." + EOL)
       const width = 36
@@ -150,48 +143,37 @@ const cli = yargs(args)
   })
   .usage("")
   .completion("completion", "generate shell completion script")
-  .command(AcpCommand)
-  .command(McpCommand)
-  .command(TuiThreadCommand)
-  .command(AttachCommand)
-  .command(RunCommand)
-  .command(GenerateCommand)
-  .command(DebugCommand)
-  .command(ProvidersCommand)
-  .command(AgentCommand)
-  .command(UpgradeCommand)
-  .command(UninstallCommand)
-  .command(ServeCommand)
-  .command(ModelsCommand)
-  .command(StatsCommand)
-  .command(ExportCommand)
-  .command(ReplayCommand)
-  .command(PrCommand)
-  .command(SessionCommand)
-  .command(OperationCommand)
-  .command(PluginCommand)
-  .command(DbCommand)
-  .fail((msg, err) => {
-    if (
-      msg?.startsWith("Unknown argument") ||
-      msg?.startsWith("Not enough non-option arguments") ||
-      msg?.startsWith("Invalid values:")
-    ) {
-      if (err) throw err
-      cli.showHelp(show)
-    }
+
+for (const command of commands) cli.command(command)
+
+cli.fail((msg, err) => {
+  if (
+    msg?.startsWith("Unknown argument") ||
+    msg?.startsWith("Not enough non-option arguments") ||
+    msg?.startsWith("Invalid values:")
+  ) {
     if (err) throw err
-    process.exit(1)
-  })
-  .strict()
+    cli.showHelp(show)
+  }
+  if (err) throw err
+  process.exit(1)
+}).strict()
 
 try {
   if (args.includes("-h") || args.includes("--help")) {
-    await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
-      if (err) throw err
-      if (!out) return
-      show(out)
-    })
+    const hasCommand = args.some((arg) => !arg.startsWith("-") && commandNames.has(arg))
+    if (!hasCommand) {
+      // With async command builders yargs prints global help itself after the
+      // parse callback, which the final process.exit() can discard on a piped
+      // stdout. Render it explicitly instead.
+      show(await cli.getHelp())
+    } else {
+      await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
+        if (err) throw err
+        if (!out) return
+        show(out)
+      })
+    }
   } else {
     await cli.parse()
   }

@@ -1,13 +1,15 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@axiomsec/plugin/tui"
 import { createMemo, createResource, createSignal, onCleanup, Show } from "solid-js"
+import { useOperationConsoleLoader } from "@tui/context/operation-console"
 import {
   deliverableLabel,
-  loadOperationConsoleSnapshot,
   replayCoveredCount,
   reportStatus,
   scopeCounts,
   scopeDecision,
+  sessionOperationSlug,
   shouldRefreshOperationConsoleSnapshotForPart,
+  shouldRefreshOperationConsoleSnapshotForSession,
   stabilizeOperationConsoleSnapshot,
   type OperationConsoleSnapshot,
   workflowLabel,
@@ -18,6 +20,7 @@ const id = "internal:sidebar-operation"
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
+  const loadSnapshot = useOperationConsoleLoader()
   const [tick, setTick] = createSignal(true)
   const refresh = () => setTick((value) => !value)
   let inflight = false
@@ -31,7 +34,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     }
     inflight = true
     try {
-      const next = await loadOperationConsoleSnapshot(props.api.state.path.directory, { sessionID: props.session_id })
+      const next = await loadSnapshot(props.api.state.path.directory, { sessionID: props.session_id })
       stableSnapshot = stabilizeOperationConsoleSnapshot(stableSnapshot, next)
       return stableSnapshot
     } finally {
@@ -59,15 +62,29 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   const replayCovered = createMemo(() => (snapshot() ? replayCoveredCount(snapshot()!) : 0))
   const report = createMemo(() => (snapshot() ? reportStatus(snapshot()!) : "cold"))
 
+  let sessionSlug: string | null | undefined
   const offIdle = props.api.event.on("session.idle", () => refresh())
   const offPart = props.api.event.on("message.part.updated", (evt) => {
     if (shouldRefreshOperationConsoleSnapshotForPart(evt.properties.part)) refresh()
   })
-  const offStatus = props.api.event.on("session.status", () => refresh())
+  const offUpdated = props.api.event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: props.session_id,
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (evt.properties.sessionID === props.session_id) sessionSlug = next
+    if (shouldRefresh) {
+      loadSnapshot.clear()
+      refresh()
+    }
+  })
   onCleanup(() => {
     offIdle()
     offPart()
-    offStatus()
+    offUpdated()
   })
 
   const scopeColor = createMemo(() => {

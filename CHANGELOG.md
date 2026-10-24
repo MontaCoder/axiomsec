@@ -5,16 +5,43 @@ All notable changes to AxiomSec are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.5] — 2026-10-24
 
 ### Performance
 
+- Top-level CLI commands load lazily: only the invoked command graph is
+  imported, the TUI app/config load inside their handlers, and help skips
+  logging and the database marker check. `--help` fell from 387 ms to 119 ms,
+  `serve` from 540 ms to 349 ms, and server RSS from 135 MB to 114 MB.
+- The TUI no longer rebuilds operation snapshots on every streamed token.
+  Views refresh on idle, completed/errored tools and operation attach/detach,
+  and share one per-app coalescing loader. Streaming CPU fell from 66.5 % to
+  44.8 % across the final PTY runs (an earlier run measured 37.3 %).
+- Evidence linking is linear instead of O(evidence × facts), the tool path
+  reuses the operation it already read, and manifest listings no longer take
+  the write lock. The synthetic snapshot build fell from 125 ms to 13.6 ms.
+- Workflow progress writes one SQLite transaction and one projection append per
+  sync instead of two upserts per step; a 10-step sync fell from 228 ms to
+  26.6 ms.
+- Evidence files over 16 MB stream to disk while hashing, previews read only
+  `maxBytes`, full reads no longer copy the buffer, and verification streams
+  through SHA-256. A 64 MB preview uses ~0.25 MB instead of ~129 MB;
+  large-file `put` peaks at ~18–30 MB instead of ~67 MB. Empty-query evidence
+  search previews only the returned page (20 previews were 22 ms vs 214 ms for
+  500 artifacts).
 - The home logo no longer repaints static cells: quiet idle periods sleep until
   the next ambient effect, cipher rain runs at 20 fps, and the scan/ignite
   sweeps run at 30 fps while pointer ripples keep 60 fps. The PTY probe's TUI
   idle CPU fell from 106.6 % to 65.2 %, peak RSS from 522.6 MB to 354.8 MB,
   and input-to-painted-text latency from 24.5 ms to 10.3 ms; a 30 s
   steady-state probe measures 28.2 % CPU instead of a continuously busy loop.
+
+### Fixed
+
+- Dependency audit is clean again: transitive `body-parser`, `fast-uri` and
+  `undici` were upgraded within their ranges, and `gitlab-ai-provider` is
+  resolved against Zod 4.6.7. Its schemas only use object/string/number/record,
+  and a provider smoke test covers the override (`RISK-DEP-02`).
 
 ## [0.5.2] — 2026-10-23
 
@@ -424,7 +451,8 @@ surface, and CLI.
 
 ---
 
-[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/MontaCoder/axiomsec/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.5
 [0.5.2]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.2
 [0.5.1]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.1
 [0.5.0]: https://github.com/MontaCoder/axiomsec/releases/tag/v0.5.0

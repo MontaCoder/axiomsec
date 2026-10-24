@@ -331,6 +331,10 @@ export interface WorkflowProgressInput {
   summary?: string
 }
 
+type FactInput = Omit<Fact, "id" | "project_id" | "operation_slug" | "time_created" | "time_updated"> & {
+  operation_slug?: string
+}
+
 function id(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
 }
@@ -487,11 +491,20 @@ async function appendProjectionLine(
   filename: string,
   record: Record<string, unknown>,
 ) {
+  await appendProjectionLines(workspace, operation_slug, filename, [record])
+}
+
+async function appendProjectionLines(
+  workspace: string,
+  operation_slug: string,
+  filename: string,
+  records: Record<string, unknown>[],
+) {
+  if (records.length === 0) return
   const dir = projectionDir(workspace, operation_slug)
   await mkdir(dir, { recursive: true })
-  await withFileLock(`cyber:${path.resolve(dir)}:${filename}`, () =>
-    appendFile(path.join(dir, filename), JSON.stringify(record) + "\n", "utf8"),
-  )
+  const text = records.map((record) => JSON.stringify(record)).join("\n") + "\n"
+  await withFileLock(`cyber:${path.resolve(dir)}:${filename}`, () => appendFile(path.join(dir, filename), text, "utf8"))
 }
 
 /**
@@ -1052,28 +1065,30 @@ export namespace Cyber {
         pending_steps: input.pending_steps,
       },
     })
-    yield* upsertFact({
-      operation_slug: input.operation_slug,
-      entity_kind: input.workflow_kind,
-      entity_key: input.workflow_id,
-      fact_name: "workflow_status",
-      value_json: {
-        steps: input.trace.length,
-        skipped: input.skipped.length,
-        completed_steps: input.completed_steps,
-        failed_steps: input.failed_steps,
-        pending_steps: input.pending_steps,
-        available: true,
-        degraded: input.skipped.length > 0,
+    const facts: FactInput[] = [
+      {
+        operation_slug: input.operation_slug,
+        entity_kind: input.workflow_kind,
+        entity_key: input.workflow_id,
+        fact_name: "workflow_status",
+        value_json: {
+          steps: input.trace.length,
+          skipped: input.skipped.length,
+          completed_steps: input.completed_steps,
+          failed_steps: input.failed_steps,
+          pending_steps: input.pending_steps,
+          available: true,
+          degraded: input.skipped.length > 0,
+        },
+        writer_kind: "tool",
+        status: "observed",
+        confidence: 1000,
+        source_event_id: eventID || undefined,
       },
-      writer_kind: "tool",
-      status: "observed",
-      confidence: 1000,
-      source_event_id: eventID || undefined,
-    })
+    ]
     for (const [index, step] of input.trace.entries()) {
       const stepKey = `${input.workflow_kind}:${input.workflow_id}:planned:${index + 1}`
-      yield* upsertFact({
+      facts.push({
         operation_slug: input.operation_slug,
         entity_kind: "workflow_step",
         entity_key: stepKey,
@@ -1088,7 +1103,7 @@ export namespace Cyber {
         step["outcome"] === "completed" || step["outcome"] === "failed" || step["outcome"] === "skipped"
           ? String(step["outcome"])
           : "pending"
-      yield* upsertFact({
+      facts.push({
         operation_slug: input.operation_slug,
         entity_kind: "workflow_step",
         entity_key: stepKey,
@@ -1108,6 +1123,7 @@ export namespace Cyber {
         source_event_id: eventID || undefined,
       })
     }
+    yield* upsertFactsBatch({ operation_slug: input.operation_slug, facts })
     return eventID
   })
 
@@ -1277,11 +1293,7 @@ export namespace Cyber {
     return event_id
   })
 
-  export const upsertFact = Effect.fn("Cyber.upsertFact")(function* (
-    input: Omit<Fact, "id" | "project_id" | "operation_slug" | "time_created" | "time_updated"> & {
-      operation_slug?: string
-    },
-  ) {
+  export const upsertFact = Effect.fn("Cyber.upsertFact")(function* (input: FactInput) {
     const instance = currentInstance()
     const operation_slug = yield* Effect.promise(() => resolveOperationSlug(input.operation_slug, instance))
     if (!instance) return ""
@@ -1373,6 +1385,111 @@ export namespace Cyber {
       }),
     ).pipe(Effect.catch(() => Effect.void))
     return resolvedID
+  })
+
+  /**
+   * Upsert many facts in one transaction and one projection append.
+   *
+   * Workflow progress writes two facts per planned step. Doing that through
+   * upsertFact meant two SQLite commits and two file-lock acquisitions per
+   * step, so the cost grew with the workflow length on every tool call.
+   * The database write is all-or-nothing; the projection append stays
+   * best-effort like the single-fact path.
+   */
+  export const upsertFactsBatch = Effect.fn("Cyber.upsertFactsBatch")(function* (input: {
+    operation_slug?: string
+    facts: FactInput[]
+  }) {
+    const instance = currentInstance()
+    if (!instance || input.facts.length === 0) return [] as string[]
+    const operation_slug = yield* Effect.promise(() =>
+      resolveOperationSlug(input.operation_slug ?? input.facts[0]?.operation_slug, instance),
+    )
+    if (!operation_slug) return [] as string[]
+    const project_id = instance.project.id
+    const now = Date.now()
+    const prepared = input.facts.map((fact) => ({ fact, fact_id: id("cfct") }))
+    const stored = yield* Effect.sync(() =>
+      Database.transaction((db) =>
+        prepared.map(({ fact, fact_id }) => {
+          db.insert(CyberFactTable)
+            .values({
+              id: fact_id,
+              project_id,
+              operation_slug,
+              entity_kind: fact.entity_kind,
+              entity_key: fact.entity_key,
+              fact_name: fact.fact_name,
+              value_json: fact.value_json,
+              writer_kind: fact.writer_kind,
+              status: fact.status,
+              confidence: fact.confidence,
+              source_event_id: fact.source_event_id,
+              evidence_refs: fact.evidence_refs,
+              expires_at: fact.expires_at,
+              time_created: now,
+              time_updated: now,
+            })
+            .onConflictDoUpdate({
+              target: [
+                CyberFactTable.project_id,
+                CyberFactTable.operation_slug,
+                CyberFactTable.entity_kind,
+                CyberFactTable.entity_key,
+                CyberFactTable.fact_name,
+              ],
+              set: {
+                value_json: fact.value_json,
+                writer_kind: fact.writer_kind,
+                status: fact.status,
+                confidence: fact.confidence,
+                source_event_id: fact.source_event_id,
+                evidence_refs: fact.evidence_refs,
+                expires_at: fact.expires_at,
+                time_updated: now,
+              },
+            })
+            .run()
+          return db
+            .select()
+            .from(CyberFactTable)
+            .where(
+              and(
+                eq(CyberFactTable.project_id, project_id),
+                eq(CyberFactTable.operation_slug, operation_slug),
+                eq(CyberFactTable.entity_kind, fact.entity_kind),
+                eq(CyberFactTable.entity_key, fact.entity_key),
+                eq(CyberFactTable.fact_name, fact.fact_name),
+              ),
+            )
+            .get()
+        }),
+      ),
+    )
+    const records = prepared.map(({ fact, fact_id }, index) => {
+      const row = stored[index]
+      return {
+        id: row?.id ?? fact_id,
+        project_id,
+        operation_slug,
+        entity_kind: fact.entity_kind,
+        entity_key: fact.entity_key,
+        fact_name: fact.fact_name,
+        value_json: fact.value_json,
+        writer_kind: fact.writer_kind,
+        status: fact.status,
+        confidence: fact.confidence,
+        source_event_id: fact.source_event_id,
+        evidence_refs: fact.evidence_refs,
+        expires_at: fact.expires_at,
+        time_created: row?.time_created ?? now,
+        time_updated: now,
+      }
+    })
+    yield* Effect.promise(() =>
+      appendProjectionLines(instance.directory, operation_slug, "facts.jsonl", records),
+    ).pipe(Effect.catch(() => Effect.void))
+    return records.map((record) => String(record.id))
   })
 
   export const upsertRelation = Effect.fn("Cyber.upsertRelation")(function* (

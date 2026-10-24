@@ -115,16 +115,18 @@ Measured on the same host, after this change:
   the home logo is visible. Shortening the cycle, rendering the reveal once
   per screen rather than looping, or batching cell updates into style runs
   would reduce it further; each changes the visual design.
-- **CLI startup.** `--help` still imports all 22 command graphs (~391 ms) and
-  `serve` takes ~442 ms. Loading only the invoked command's module (and all
-  modules for `--help`) is the next candidate.
-- **Snapshot cost per mutation.** `Tool.wrap` rebuilds the context pack by
-  reading up to 1 MB from each projection file after every state-changing
-  call. The read is bounded (`RISK-PERF-01`), but an incrementally maintained
-  snapshot would remove it from the tool latency path.
-- **TUI resident set.** ~355 MB with animations off is dominated by the
+- **CLI startup.** Fixed 2026-10-24: top-level commands now load lazily, the
+  TUI app is imported only by the TUI handler, and help skips logging and the
+  database marker check. `--help` fell to 119.0 ms and `serve` to 350.1 ms.
+- **Snapshot cost per mutation.** Fixed 2026-10-24: the evidence index is
+  linear instead of O(evidence × facts), the tool path reuses the operation it
+  already read, the TUI coalesces the five views into one build, and evidence
+  listings no longer take the write lock. The synthetic snapshot fell from
+  124.9 ms to 14.0 ms. Projection JSONL parsing remains the dominant part.
+- **TUI resident set.** ~358 MB with animations enabled is dominated by the
   worker, native scene buffers and the ~500 renderables on the home screen;
-  collapsing static logo cells into style runs would also lower it.
+  coalescing snapshot builds lowered it from 384 MB, and collapsing static
+  logo cells into style runs would lower it further.
 
 ### Why `--version` is 13x faster
 
@@ -232,4 +234,134 @@ bun script/bench.ts compare docs/performance/baseline.json docs/performance/late
 
 The final tree passes all of the above. TUI scenarios remain manual per
 [VERIFICATION.md](../agents/VERIFICATION.md); the PTY benchmark exercises first
-paint and input but not every dialog.
+paint and input but not every dialog. (2026-10-24 update: the dependency audit
+was cleared before the 0.5.5 tag; see `RISK-DEP-02`.)
+
+## 2026-10-24 follow-up: lazy CLI, event-driven TUI, linear snapshots
+
+Same host (win32-x64, Bun 1.4.4), same harness. Reproduce with:
+
+```bash
+bun run --cwd packages/axiomsec build --single --skip-install
+bun script/bench.ts --label pre-perf --out docs/performance/pre-perf.json   # baseline commit
+bun script/bench.ts --label optimized --out docs/performance/optimized.json
+bun script/bench.ts compare docs/performance/pre-perf.json docs/performance/optimized.json
+bun run --cwd packages/axiomsec script/bench-hotpaths.ts
+bun script/bench.ts stream
+```
+
+| Metric | Baseline | After | Delta |
+|---|---:|---:|---:|
+| Cold start `--version` p50 | 23.32 ms | 24.05 ms | ~flat |
+| Cold start `--help` p50 | 386.98 ms | **119.20 ms** | **-69.2 %** |
+| Server listen | 540.35 ms | **349.03 ms** | **-35.4 %** |
+| Server RSS (3 s) | 134.59 MB | **114.37 MB** | **-15.0 %** |
+| Server idle CPU | 2.60 % | 0.00 % | measurement floor |
+| Loopback HTTP throughput | 2,557 req/s | 2,560 req/s | +0.1 % (noise) |
+| TUI first frame (median of 3) | 17.34 ms | 9.00 ms | noisy, see samples |
+| TUI input → painted text | 7.86 ms | 9.84 ms | noise, see note |
+| TUI idle CPU (4 s) | 66.8 % | 71.09 % | noise, see steady state |
+| TUI peak RSS | 383.9 MB | **357.8 MB** | **-6.8 %** |
+| Binary size | 142.49 MB | 142.52 MB | ~flat |
+
+TUI input latency is the noisiest metric: the baseline samples were
+14.08/6.73/7.86 ms and the final optimized run measured 9.84 ms median. Nine
+additional probes after the change measured 8.14–15.90 ms (median 10.51 ms),
+consistent with the earlier 10.3 ms report; the baseline 7.86 ms was the low
+end of its own 6.73–14.08 ms range. No code on the input path changed. The 4 s
+idle window includes mount/sync work; a 30 s steady-state probe with animations
+off measured 6.93/7.14/7.71 % CPU (median 7.14 %) and 341–355 MB, matching the
+previous report's 7.5 % and showing no idle regression. The per-run samples
+are kept in the JSON artifacts rather than claiming a regression or a win.
+Server startup varied 344–425 ms across runs on this host; the 349 ms run in
+`optimized.json` is representative of the other 344–350 ms runs. The loopback
+throughput moved +0.1 %, inside the run-to-run range.
+
+### Hot paths (synthetic 2,000 facts / 2,000 relations / 500 evidence)
+
+| Path | Before p50 | After p50 | Delta |
+|---|---:|---:|---:|
+| `OperationSnapshot.build` | 124.87 ms | **13.59 ms** | **-89.1 %** |
+| `OperationSnapshot.build` (first pass) | 124.87 ms | 23.90 ms | -80.9 % |
+| Workflow sync, 10 steps | 227.97 ms | **26.62 ms** | **-88.3 %** |
+| `Evidence.list` | 7.35 ms | **0.52 ms** | **-92.9 %** |
+| `Operation.read` | 1.06 ms | 1.06 ms | flat |
+
+The first-pass snapshot number is the result after the linear evidence index
+and operation reuse; the final 14.01 ms also includes the lock-free manifest
+listing. `Evidence.list` was lock-bound: a raw read+parse of the 500-entry
+manifest is ~0.25 ms, while acquiring and releasing the write lock cost ~7.5 ms.
+
+### Large evidence
+
+A 64 MB sparse artifact through the same `Evidence.put`/`get` path:
+
+| Case | Before | After | Delta |
+|---|---:|---:|---:|
+| `put` time | 140 ms | 159 ms | +14 % (streaming overhead) |
+| `put` RSS delta | +67 MB | **+18–30 MB** | **~-55 to -73 %** |
+| preview (`maxBytes=4000`) | full read, +129 MB | **2.8 ms, +0.25–0.5 MB** | bounded read |
+| `verify` | full read + hash, +129 MB | **130 ms, no artifact-sized growth** | streaming SHA-256 |
+| full `get` | 42 ms, +129 MB | **24.5 ms, +64 MB** | no extra copy |
+
+File inputs above 16 MB now stream to a temp file while hashing; smaller files
+keep the faster in-memory path. Previews read only the requested prefix, a full
+read returns the buffer without copying it, and verification hashes the artifact
+in one streaming pass instead of loading it. `evidence search` with no query
+previews only the returned page: direct measurement of 500 small artifacts was
+**22 ms for 20 previews vs 214 ms for all 500**. Metadata linking uses maps
+instead of scanning findings/observations/routes per entry. The pre-fix numbers
+are in `evidence-large-pre.json`; the probe was added after the first hot-path
+run.
+
+### Streaming probe
+
+`bun script/bench.ts stream` seeds an operation with 500 facts / 200 evidence
+and streams 300 deltas through a local OpenAI-compatible SSE endpoint. Streaming
+CPU fell from a 66.48 % median (62.32–71.28 %) to **44.84 %** across two
+3-sample runs on the final binary (40.01–50.64 %), a **-32.6 %** median. The
+earlier optimized run measured 37.34 %; the TUI probe is noisy because the
+logo animation dominates the same window. First-token time (~2.4 s) is
+unchanged because it includes session creation and title generation.
+
+### What changed
+
+- `main.ts` builds the CLI from a lazy command registry; only the invoked
+  command's graph loads. The TUI app/config imports moved into the TUI and
+  attach handlers. Help skips logging, heap startup and the database marker
+  check, and imports support modules directly instead of the full barrel.
+- TUI operation views no longer rebuild snapshots on every `session.status`
+  token. They refresh on idle, completed/errored tools and operation
+  attach/detach, and share one per-app 150 ms coalescing loader.
+- `evidenceIndex` now builds evidence→finding/observation/route maps in one
+  pass with parity tests against the previous per-entry scan.
+- Workflow progress writes all facts in one SQLite transaction and one
+  projection append under one lock instead of two upserts per step.
+- Evidence ingestion streams large files, previews honor `maxBytes`, full reads
+  no longer copy the buffer, verification streams through SHA-256, and read-only
+  manifest lookups/listings use a stat-verified read of the append-only file
+  while writes stay locked. Empty-query search previews only the returned page,
+  and linked entities are looked up through maps.
+
+### Remaining
+
+- Snapshot build is ~13.6 ms: projection JSONL parsing now dominates. Reading
+  the canonical SQLite tables or adding a per-instance projection cache is the
+  next candidate; both need a cache-invalidation design.
+- Workflow sync is ~27 ms for 10 steps; further gains need a single-statement
+  upsert or fewer projection records.
+- Full evidence `get` still reads the whole artifact by design; `verify` now
+  streams its hash, and previews are bounded. Small file inputs stay in memory.
+- TUI idle CPU is animation-bound by design; TUI RSS is native-scene dominated.
+- Session history is re-read per model step and remote instruction URLs are
+  fetched per step; neither is on the measured benchmark path.
+- Dependency audit is clean as of 0.5.5: transitive `body-parser`, `fast-uri`
+  and `undici` were patched, and `gitlab-ai-provider` is resolved against Zod 4
+  (its schemas use only object/string/number/record; see `RISK-DEP-02`).
+
+### Validation
+
+`bun typecheck`, `bun run lint` (0 errors, warnings reviewed), the
+single-platform build, and `bun test --timeout 60000` (396 tests: 392 pass,
+4 live-provider skips, 208 s) pass. TUI scenarios remain manual; the PTY
+stream probe and the existing `V-S*` scenarios are the gate.

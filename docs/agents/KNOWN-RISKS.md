@@ -400,8 +400,27 @@ This register documents risks; it does not fix them unless an entry is marked `f
 **Why it matters:** quadratic cost over a long session, and `Cyber.readProjectedState` silently fell back to empty state after its 2 s guard, so the deliverable degraded on long operations.
 **Fix:** the projection readers take the tail of the file (1 MB) instead of the whole thing.
 **Residual:** the files still grow on disk; compaction is not implemented.
-**Re-verify:** run a long operation and compare the per-call latency.
-**Related:** `ENG-02`, `ENG-03`.
+**Update 2026-10-24:** the snapshot's evidence-to-finding/observation/route linking was O(evidence × facts) with six filters per entry; it is now one reverse-index pass. `Tool.wrap` reuses the operation it already read, workflow progress writes one transaction plus one projection append instead of two upserts per step, and evidence listings use a stat-verified lock-free read of the append-only manifest (see `RISK-PERF-03`). On the synthetic fixture (2,000 facts / 2,000 relations / 500 evidence) `OperationSnapshot.build` fell from 124.9 ms to 14.0 ms, `Evidence.list` from 7.35 ms to 0.49 ms, and a 10-step workflow sync from 228.0 ms to 27.9 ms. The remaining ~14 ms is dominated by parsing the three projection tails.
+**Re-verify:** `bun run --cwd packages/axiomsec script/bench-hotpaths.ts`; compare `docs/performance/hotpaths-pre-perf.json` with `hotpaths-optimized.json`.
+**Related:** `ENG-02`, `ENG-03`, `RISK-PERF-02`.
+
+### RISK-PERF-02 — The TUI operation console can lag a mutation by 150 ms
+
+**Status:** accepted 2026-10-24 · **Severity:** low · **Verified:** 2026-10-24
+**Evidence:** `packages/axiomsec/src/cli/cmd/tui/component/operation-lens/loader.ts` coalesces the five operation views through a 150 ms cache owned by the TUI app. `sessionOperationSlug` also reads a runtime field the generated SDK type does not expose yet.
+**Why it matters:** five views previously rebuilt the same 24 ms snapshot on every tool completion. The cache makes one build serve all five, at the cost of showing state up to 150 ms old; an attach/detach calls `clear()` so the operation switch is not delayed.
+**Residual:** a mutation that lands while a build is in flight is visible on the next idle/tool event, not mid-build. The TUI is not covered by `bun test`; the PTY stream probe and manual `V-S*` scenarios remain the gate.
+**Re-verify:** `bun script/bench.ts stream`; attach/switch an operation while idle and confirm the banner/sidebar update.
+**Related:** `RISK-PERF-01`, `RISK-TUI-01`.
+
+### RISK-PERF-03 — Evidence listings bypass the write lock
+
+**Status:** accepted 2026-10-24 · **Severity:** low · **Verified:** 2026-10-24
+**Evidence:** `packages/axiomsec/src/core/evidence/store.ts` uses `readManifestStable` for `list`, `get` and `verify`: stat, read, stat again, retry on a size/mtime change, then fall back to the locked reader. Acquiring and releasing the write lock cost ~7.5 ms of the 7.7 ms the 500-entry listing took, and the snapshot runs after every state-changing tool call.
+**Why it matters:** the manifest is append-only; a read bracketed by unchanged size/mtime is a consistent snapshot, and a concurrent append either differs and retries or lands after the read. Writes remain locked.
+**Residual:** a read can miss an append that lands after its final stat (the next read sees it); an in-place hand edit that keeps both size and mtime can evade the stable check, but it cannot make `verify` accept different bytes. File inputs over 16 MB stream; smaller ones stay in memory. Full `get` still reads the whole artifact by design; `verify` streams its hash.
+**Re-verify:** `bun test test/core/evidence/store.test.ts`; `bun run --cwd packages/axiomsec script/bench-hotpaths.ts`.
+**Related:** `RISK-PERF-01`, `RISK-PERSIST-05`, `SEC-04`.
 
 ### RISK-AUDIT-03 — Side-effect metadata is still inconsistent across cyber tools
 
@@ -890,6 +909,15 @@ names the test that must go red if the fix is reverted.
 **Residual:** beta.22 may change before 1.0 stable; re-check typecheck and the migration suite on every Drizzle release.
 **Re-verify:** `bun pm ls | grep drizzle` and `bun typecheck` after a bump.
 **Related:** `docs/performance/README.md`.
+
+### RISK-DEP-02 — GitLab provider is resolved against Zod 4 by override
+
+**Status:** accepted 2026-10-24 · **Severity:** low · **Verified:** 2026-10-24
+**Evidence:** `gitlab-ai-provider@6.23.0` declares `zod@^3.25.76`, and the installed Zod 3 copy was flagged by GHSA-mrhx-c7xc-m3w5 (memory exhaustion from unbounded `z.array` parsing). The provider uses only `z.object`, `z.string`, `z.number` and `z.record`; a repository-wide check found no `z.array` in its distribution. `package.json` overrides its Zod to the root 4.6.7, and `bun audit` is clean.
+**Why it matters:** keeping a vulnerable copy just because a dependency's declared range is stale would leave CI's audit gate red. Forcing a major is a compatibility risk, so it is guarded by a smoke test that imports the provider and validates its OAuth schema.
+**Residual:** the override is one parent level deep by design and must be revisited when `gitlab-ai-provider` releases Zod 4 support; that release should replace the override. The test covers import and one exported schema, not every provider request path.
+**Re-verify:** `bun audit`; `bun test packages/axiomsec/test/providers/gitlab.test.ts`; check `node_modules/gitlab-ai-provider` resolves `zod` to the root copy.
+**Related:** `RISK-DEP-01`, `docs/performance/README.md`.
 
 ### RISK-CLI-03 — An unknown command printed an error but exited 0
 

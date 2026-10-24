@@ -73,6 +73,7 @@ import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
 import { Toast, useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv.tsx"
+import { useOperationConsoleLoader } from "../../context/operation-console"
 import * as Editor from "../../util/editor"
 import { usePromptRef } from "../../context/prompt"
 import { useExit } from "../../context/exit"
@@ -95,12 +96,13 @@ import { OperationLensPanel } from "@tui/component/operation-lens/panel"
 import {
   evidenceRows,
   findingsRows,
-  loadOperationConsoleSnapshot,
   replayRows,
   reportGateFocusIndex,
   reportGateRows,
   restoreSelectedIndex,
+  sessionOperationSlug,
   shouldRefreshOperationConsoleSnapshotForPart,
+  shouldRefreshOperationConsoleSnapshotForSession,
   stabilizeOperationConsoleSnapshot,
   type OperationConsoleSnapshot,
   workflowRows,
@@ -136,6 +138,7 @@ export function Session() {
   const route = useRouteData("session")
   const { navigate } = useRoute()
   const sync = useSync()
+  const loadSnapshot = useOperationConsoleLoader()
   const event = useEvent()
   const project = useProject()
   const tuiConfig = useTuiConfig()
@@ -216,7 +219,7 @@ export function Session() {
     }
     snapshotInflight = true
     try {
-      const next = await loadOperationConsoleSnapshot(sync.path.directory, { sessionID: route.sessionID })
+      const next = await loadSnapshot(sync.path.directory, { sessionID: route.sessionID })
       stableOperationSnapshot = stabilizeOperationConsoleSnapshot(stableOperationSnapshot, next)
       return stableOperationSnapshot
     } finally {
@@ -395,7 +398,6 @@ export function Session() {
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
-    refreshSnapshot()
     if (evt.properties.status.type !== "retry") return
     if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
     if (dialog.stack.length > 0) return
@@ -1329,13 +1331,29 @@ export function Session() {
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
 
+  let sessionSlug = sessionOperationSlug(sync.session.get(route.sessionID))
   const offIdle = event.on("session.idle", () => refreshSnapshot())
   const offPart = event.on("message.part.updated", (evt) => {
     if (shouldRefreshOperationConsoleSnapshotForPart(evt.properties.part)) refreshSnapshot()
   })
+  const offUpdated = event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: route.sessionID,
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (evt.properties.sessionID === route.sessionID) sessionSlug = next
+    if (shouldRefresh) {
+      loadSnapshot.clear()
+      refreshSnapshot()
+    }
+  })
   onCleanup(() => {
     offIdle()
     offPart()
+    offUpdated()
   })
 
   return (

@@ -1,0 +1,23 @@
+[
+  {
+    "streamMs": 4936.42,
+    "firstTokenMs": 2340.81,
+    "cpuPercent": 50.64,
+    "outputBytes": 70319,
+    "providerRequests": 1
+  },
+  {
+    "streamMs": 4961.3,
+    "firstTokenMs": 2317.9,
+    "cpuPercent": 43.15,
+    "outputBytes": 70913,
+    "providerRequests": 1
+  },
+  {
+    "streamMs": 4959.61,
+    "firstTokenMs": 2329.72,
+    "cpuPercent": 40.01,
+    "outputBytes": 70453,
+    "providerRequests": 1
+  }
+]

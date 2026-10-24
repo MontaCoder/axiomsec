@@ -1,0 +1,36 @@
+{
+  "fixture": {
+    "facts": 2000,
+    "relations": 2000,
+    "evidence": 500,
+    "workflow_steps": 10
+  },
+  "operationRead": {
+    "p50": 1.06,
+    "p95": 1.56,
+    "min": 0.9,
+    "max": 1.66,
+    "samples": 30
+  },
+  "evidenceList": {
+    "p50": 7.35,
+    "p95": 15.91,
+    "min": 6.05,
+    "max": 16.18,
+    "samples": 30
+  },
+  "snapshotBuild": {
+    "p50": 124.87,
+    "p95": 160.53,
+    "min": 121.84,
+    "max": 160.53,
+    "samples": 15
+  },
+  "workflowSync": {
+    "p50": 227.97,
+    "p95": 246.45,
+    "min": 216.05,
+    "max": 246.45,
+    "samples": 10
+  }
+}

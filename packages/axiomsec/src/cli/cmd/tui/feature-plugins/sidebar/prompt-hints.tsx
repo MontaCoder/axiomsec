@@ -1,11 +1,13 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@axiomsec/plugin/tui"
 import { createMemo, createResource, createSignal, onCleanup, Show } from "solid-js"
 import { useSessionView } from "@tui/context/session-view"
+import { useOperationConsoleLoader } from "@tui/context/operation-console"
 import {
-  loadOperationConsoleSnapshot,
   replayCoveredCount,
   reportStatus,
+  sessionOperationSlug,
   shouldRefreshOperationConsoleSnapshotForPart,
+  shouldRefreshOperationConsoleSnapshotForSession,
   stabilizeOperationConsoleSnapshot,
   type OperationConsoleSnapshot,
 } from "@tui/component/operation-lens/snapshot"
@@ -15,11 +17,17 @@ const id = "internal:prompt-hints"
 function View(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const sessionView = useSessionView()
+  const loadSnapshot = useOperationConsoleLoader()
   const [tick, setTick] = createSignal(true)
   const refresh = () => setTick((value) => !value)
   let inflight = false
   let queued = false
   let stableSnapshot: OperationConsoleSnapshot | undefined
+
+  function currentSessionID() {
+    const current = props.api.route.current
+    return current.name === "session" ? (current.params as { sessionID?: string } | undefined)?.sessionID : undefined
+  }
 
   const [data] = createResource<OperationConsoleSnapshot | undefined, boolean>(tick, async () => {
     if (inflight) {
@@ -28,9 +36,7 @@ function View(props: { api: TuiPluginApi }) {
     }
     inflight = true
     try {
-      const current = props.api.route.current
-      const sessionID = current.name === "session" ? (current.params as { sessionID?: string } | undefined)?.sessionID : undefined
-      const next = await loadOperationConsoleSnapshot(props.api.state.path.directory, { sessionID })
+      const next = await loadSnapshot(props.api.state.path.directory, { sessionID: currentSessionID() })
       stableSnapshot = stabilizeOperationConsoleSnapshot(stableSnapshot, next)
       return stableSnapshot
     } finally {
@@ -45,13 +51,29 @@ function View(props: { api: TuiPluginApi }) {
   const snapshot = createMemo(() => data() ?? stableSnapshot)
   const summary = createMemo(() => snapshot()?.projected?.summary)
 
+  let sessionSlug: string | null | undefined
   const offIdle = props.api.event.on("session.idle", () => refresh())
   const offPart = props.api.event.on("message.part.updated", (evt) => {
     if (shouldRefreshOperationConsoleSnapshotForPart(evt.properties.part)) refresh()
   })
+  const offUpdated = props.api.event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: currentSessionID(),
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (evt.properties.sessionID === currentSessionID()) sessionSlug = next
+    if (shouldRefresh) {
+      loadSnapshot.clear()
+      refresh()
+    }
+  })
   onCleanup(() => {
     offIdle()
     offPart()
+    offUpdated()
   })
 
   return (

@@ -1,0 +1,12 @@
+{
+  "label": "tui-idle-steady-optimized",
+  "date": "2026-10-24",
+  "note": "BENCH_TUI_ANIMATIONS=off BENCH_TUI_IDLE_MS=30000 on the optimized binary; steady-state idle CPU is 7.14% median, matching the previous report's 7.5%.",
+  "samples": [
+    { "idleCpuPercent": 6.93, "peakRssMb": 354.59, "inputToNextFrameMs": 12.82 },
+    { "idleCpuPercent": 7.14, "peakRssMb": 341.18, "inputToNextFrameMs": 12.46 },
+    { "idleCpuPercent": 7.71, "peakRssMb": 345.72, "inputToNextFrameMs": 21.19 }
+  ],
+  "idleCpuPercentMedian": 7.14,
+  "peakRssMbMedian": 345.72
+}

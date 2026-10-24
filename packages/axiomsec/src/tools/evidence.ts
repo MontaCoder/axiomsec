@@ -126,19 +126,28 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
               }),
             )
             const needleForms = searchForms(params.query ?? "")
+            const findingsByKey = new Map(snapshot.findings.all.map((finding) => [finding.key, finding]))
+            const observationsById = new Map(snapshot.observations.map((observation) => [observation.id, observation]))
+            const routesByKey = new Map(snapshot.routes.map((route) => [route.key, route]))
+            const entriesBySha = new Map(snapshot.evidence.entries.map((entry) => [entry.sha256, entry]))
+            // With no query every entry matches; only the returned page needs
+            // previews. Reading all text artifacts here was O(entries) file I/O.
+            const deferPreview = needleForms.length === 0
             const rows: Array<Record<string, unknown>> = []
             for (const entry of snapshot.evidence.entries) {
-              const linkedFindings = snapshot.findings.all.filter((finding) => entry.linked_finding_keys.includes(finding.key))
-              const linkedObservations = snapshot.observations.filter((observation) => entry.linked_observation_ids.includes(observation.id))
-              const linkedRoutes = snapshot.routes.filter((route) => entry.linked_routes.includes(route.key))
+              const linkedFindings = entry.linked_finding_keys.flatMap((key) => findingsByKey.get(key) ?? [])
+              const linkedObservations = entry.linked_observation_ids.flatMap((id) => observationsById.get(id) ?? [])
+              const linkedRoutes = entry.linked_routes.flatMap((key) => routesByKey.get(key) ?? [])
               let preview = ""
               let previewTruncated = false
-              if (textLike(entry)) {
-                const item = yield* Effect.promise(() => Evidence.get(workspace, slug, entry.sha256).catch(() => undefined))
+              if (!deferPreview && textLike(entry)) {
+                const item = yield* Effect.promise(() =>
+                  Evidence.get(workspace, slug, entry.sha256, { maxBytes: 4000 }).catch(() => undefined),
+                )
                 if (item) {
-                  const bytes = item.bytes.slice(0, Math.min(item.bytes.length, 4000))
+                  const bytes = item.bytes
                   preview = new TextDecoder().decode(bytes)
-                  previewTruncated = item.bytes.length > bytes.length
+                  previewTruncated = item.entry.size > bytes.length
                 }
               }
               const fields = [
@@ -168,6 +177,18 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
             }
             rows.sort((a, b) => Number(b["score"] ?? 0) - Number(a["score"] ?? 0) || Number(b["at"] ?? 0) - Number(a["at"] ?? 0))
             const entries = rows.slice(0, params.limit ?? 20)
+            if (deferPreview) {
+              for (const row of entries) {
+                const source = entriesBySha.get(String(row["sha256"]))
+                if (!source || !textLike(source)) continue
+                const item = yield* Effect.promise(() =>
+                  Evidence.get(workspace, slug, source.sha256, { maxBytes: 4000 }).catch(() => undefined),
+                )
+                if (!item) continue
+                row["preview"] = new TextDecoder().decode(item.bytes)
+                row["preview_truncated"] = item.entry.size > item.bytes.length
+              }
+            }
             return {
               title: `evidence · search · ${entries.length}`,
               output: JSON.stringify({ query: params.query ?? "", count: rows.length, entries }, null, 2),
@@ -189,7 +210,8 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
                 metadata: { action: "get", slug, side_effects: Tool.sideEffects("read_only") },
               }
             }
-            const item = yield* Effect.promise(() => Evidence.get(workspace, slug, sha))
+            const maxBytes = params.max_bytes ?? 4000
+            const item = yield* Effect.promise(() => Evidence.get(workspace, slug, sha, { maxBytes }))
             if (!item) {
               return {
                 title: `evidence · ${sha}`,
@@ -201,8 +223,7 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
               OperationSnapshot.build(workspace, { slug, includeDoctor: false, maxEvidence: 100 }),
             )
             const indexed = snapshot.evidence.entries.find((entry) => entry.sha256 === item.entry.sha256)
-            const maxBytes = params.max_bytes ?? 4000
-            const bytes = item.bytes.slice(0, Math.min(item.bytes.length, maxBytes))
+            const bytes = item.bytes
             const preview = textLike(item.entry) ? new TextDecoder().decode(bytes) : `[binary preview omitted: ${bytes.length} bytes]`
             return {
               title: `evidence · ${item.entry.sha256}`,
@@ -213,7 +234,7 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
                   linked_routes: indexed?.linked_routes ?? [],
                   replay_labels: indexed?.replay_labels ?? [],
                   preview,
-                  truncated: item.bytes.length > bytes.length,
+                  truncated: item.entry.size > bytes.length,
                 },
                 null,
                 2,
@@ -226,7 +247,7 @@ export const EvidenceTool = Tool.define<typeof parameters, Metadata, never>(
                 linked_finding_keys: indexed?.linked_finding_keys ?? [],
                 linked_routes: indexed?.linked_routes ?? [],
                 replay_labels: indexed?.replay_labels ?? [],
-                truncated: item.bytes.length > bytes.length,
+                truncated: item.entry.size > bytes.length,
                 side_effects: Tool.sideEffects("read_only"),
               },
             }

@@ -1,9 +1,11 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@axiomsec/plugin/tui"
 import type { ToolPart } from "@axiomsec/sdk/v2"
 import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
+import { useOperationConsoleLoader } from "@tui/context/operation-console"
 import {
-  loadOperationConsoleSnapshot,
+  sessionOperationSlug,
   shouldRefreshOperationConsoleSnapshotForPart,
+  shouldRefreshOperationConsoleSnapshotForSession,
   stabilizeOperationConsoleSnapshot,
   type OperationConsoleSnapshot,
 } from "./operation-console"
@@ -219,6 +221,7 @@ function padCell(value: string, width: number, align: "left" | "right" = "left")
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
+  const loadSnapshot = useOperationConsoleLoader()
   const [tick, setTick] = createSignal(true)
   const refresh = () => setTick((value) => !value)
   let inflight = false
@@ -233,7 +236,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     }
     inflight = true
     try {
-      const next = await loadOperationConsoleSnapshot(props.api.state.path.directory, { sessionID: props.session_id })
+      const next = await loadSnapshot(props.api.state.path.directory, { sessionID: props.session_id })
       stableSnapshot = stabilizeOperationConsoleSnapshot(stableSnapshot, next)
       return stableSnapshot
     } finally {
@@ -291,13 +294,29 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   const effectiveRows = createMemo(() => (timelineRows().length > 0 ? timelineRows() : rows()))
   const empty = createMemo(() => effectiveRows().length === 0)
 
+  let sessionSlug: string | null | undefined
   const offIdle = props.api.event.on("session.idle", () => refresh())
   const offPart = props.api.event.on("message.part.updated", (evt) => {
     if (shouldRefreshOperationConsoleSnapshotForPart(evt.properties.part)) refresh()
   })
+  const offUpdated = props.api.event.on("session.updated", (evt) => {
+    const next = sessionOperationSlug(evt.properties.info)
+    const shouldRefresh = shouldRefreshOperationConsoleSnapshotForSession({
+      sessionID: evt.properties.sessionID,
+      currentSessionID: props.session_id,
+      previousSlug: sessionSlug,
+      nextSlug: next,
+    })
+    if (evt.properties.sessionID === props.session_id) sessionSlug = next
+    if (shouldRefresh) {
+      loadSnapshot.clear()
+      refresh()
+    }
+  })
   onCleanup(() => {
     offIdle()
     offPart()
+    offUpdated()
   })
 
   const colorFor = (key: Row["statusColorKey"]) => {
