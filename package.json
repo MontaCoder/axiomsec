@@ -83,6 +83,14 @@
     "@openrouter/ai-sdk-provider": "3.1.0",
     "@ai-sdk/provider": "4.0.33",
     "@ai-sdk/provider-utils": "5.0.67",
-    "@ai-sdk/gateway": "4.0.124"
+    "@ai-sdk/gateway": "4.0.124",
+    "body-parser": "2.4.0",
+    "fast-uri": "3.1.9",
+    "node-gyp": {
+      "undici": "6.29.1"
+    },
+    "gitlab-ai-provider": {
+      "zod": "4.6.7"
+    }
   }
 }
