@@ -2,18 +2,16 @@
 
 > Terminal-native AI agent harness for AppSec and pentest operations.
 
-AxiomSec wraps a model with a security workspace instead of a chat box. It keeps target, scope, runbooks, findings, evidence, replay state and reports together while the work is happening — inside the terminal you already use.
+[![Version](https://img.shields.io/badge/version-0.5.5-36ff86?style=flat-square&labelColor=0b1410)](./CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-36ff86?style=flat-square&labelColor=0b1410)](./LICENSE)
+[![Runtime](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.4.4-36ff86?style=flat-square&labelColor=0b1410)](https://bun.sh)
+[![Status](https://img.shields.io/badge/status-pre--1.0-f2c14e?style=flat-square&labelColor=0b1410)](./CHANGELOG.md)
 
-```
- █████╗ ██╗  ██╗██╗ ██████╗ ███╗   ███╗███████╗███████╗ ██████╗
-██╔══██╗╚██╗██╔╝██║██╔═══██╗████╗ ████║██╔════╝██╔════╝██╔════╝
-███████║ ╚███╔╝ ██║██║   ██║██╔████╔██║███████╗█████╗  ██║
-██╔══██║ ██╔██╗ ██║██║   ██║██║╚██╔╝██║╚════██║██╔══╝  ██║
-██║  ██║██╔╝ ██╗██║╚██████╔╝██║ ╚═╝ ██║███████║███████╗╚██████╗
-╚═╝  ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝ ╚═════╝
-```
+AxiomSec wraps a model with a security workspace instead of a chat box. Target, scope, runbooks, findings, evidence, replay state and reports stay together while the work is happening — inside the terminal you already use.
 
-**Version:** 0.5.5 · **License:** AGPL-3.0-or-later · **Runtime:** Bun ≥ 1.4.4 · **Changelog:** [`CHANGELOG.md`](./CHANGELOG.md)
+[![AxiomSec TUI: /pwn creates a scoped operation, an HTTP request proves a cross-tenant read, the finding is verified with evidence, and the report gate turns green](docs/assets/axiomsec-demo.gif)](docs/assets/axiomsec-demo.gif)
+
+*A scoped operation against a reserved `.test` lab target: scope check → request → verified finding → report gate.*
 
 ---
 
@@ -39,38 +37,41 @@ AxiomSec wraps a model with a security workspace instead of a chat box. It keeps
 
 AxiomSec is an **open source AI security agent that runs inside your terminal**. It is built for people who already live between shell, browser, HTTP requests, scanners, advisories, notes and reports — and want a model that lives in the same loop instead of beside it.
 
-It is:
-
-- **Not** a chatbot.
-- **Not** a scanner wrapper.
-- **Not** a Burp or Kali replacement.
+It is **not** a chatbot, **not** a scanner wrapper, and **not** a Burp or Kali replacement.
 
 It is a security workspace built around a model. The model can reason and act; AxiomSec keeps the operation around it: tools, runbooks, events, facts, evidence, replay, findings and deliverables.
 
 AxiomSec is shaped around **authorized AppSec and Pentest workflows**. Other surfaces (OSINT, CTF/lab, cloud, container, IaC, binary triage) exist or are planned but are not marketed as equally mature yet.
 
+One request, end to end:
+
+```text
+TUI or serve → session loop → model → tool registry
+             → Tool.wrap → tool (Guard / ask) → cyber kernel + evidence
+```
+
 ## Highlights
 
 | Capability | What you get |
 | --- | --- |
-| Cyber agents | Switch posture between AppSec, Pentest, OSINT, CTF/lab and research-style work without restarting. |
-| Runbooks | Repeatable security workflows that keep the agent moving through a real task instead of random tool calls. |
-| Operation memory | Target, scope, activity, findings, evidence, replay and report state stay together across sessions. |
-| Findings lifecycle | Candidate → observed → verified → reportable, with rejection and stale states kept visible. |
-| Evidence + replay | Capture what was observed and the steps that produced it, so important work is reproducible. |
-| Local tools first | Uses tools already installed on your machine and reports what is available, missing or degraded. |
-| Reports | Generate deliverables from the operation instead of reconstructing everything at the end. |
-| Share bundles | Export an operation so it can be reviewed, resumed or handed off. |
-| Plugins | Extend the agent through `@axiomsec/plugin`. |
-| Headless server | Run the same engine without the TUI for scripting and integrations. |
-| ACP / MCP | First-class Agent Client Protocol surface and Model Context Protocol server management. |
+| **Cyber agents** | Switch posture between AppSec, Pentest, OSINT, CTF/lab and research-style work without restarting. |
+| **Runbooks** | Repeatable security workflows that keep the agent moving through a real task instead of random tool calls. |
+| **Operation memory** | Target, scope, activity, findings, evidence, replay and report state stay together across sessions. |
+| **Findings lifecycle** | Candidate → observed → verified → reportable, with rejection and stale states kept visible. |
+| **Evidence + replay** | Capture what was observed and the steps that produced it, so important work is reproducible. |
+| **Local tools first** | Uses tools already installed on your machine and reports what is available, missing or degraded. |
+| **Reports** | Generate deliverables from the operation instead of reconstructing everything at the end. |
+| **Share bundles** | Export an operation so it can be reviewed, resumed or handed off. |
+| **Plugins** | Extend the agent through `@axiomsec/plugin`. |
+| **Headless server** | Run the same engine without the TUI for scripting and integrations. |
+| **ACP / MCP** | First-class Agent Client Protocol surface and Model Context Protocol server management. |
 
 ## Install
 
 AxiomSec runs on Bun.
 
 ```bash
-# from source (recommended during 0.1.x)
+# from source (recommended while pre-1.0)
 git clone https://github.com/MontaCoder/axiomsec.git
 cd axiomsec
 bun install
@@ -96,11 +97,11 @@ axiomsec
 Inside the TUI:
 
 ```text
-/doctor                 inspect local tool readiness
+/doctor                inspect local tool readiness
 /init                  create or update the AGENTS.md harness
-/runbook                start a security workflow
-/pwn <target>           create a scoped pentest operation for a target
-/share                  export the active operation
+/runbook               start a security workflow
+/pwn <target>          create a scoped pentest operation for a target
+/share                 export the active operation
 ```
 
 Run a one-shot non-interactive prompt:
@@ -163,7 +164,7 @@ Common options:
 
 ## Slash commands
 
-Inside the TUI, slash commands launch built-in workflows. The following ship with AxiomSec 0.1:
+Inside the TUI, slash commands launch built-in workflows:
 
 | Command | What it does |
 | --- | --- |
@@ -217,9 +218,12 @@ The bet is not that one model magically solves security. The bet is that good mo
 
 ## Repository layout
 
-This is a Bun + Turbo workspace. Source is split by responsibility, not by feature trees:
+This is a Bun + Turbo workspace. Source is split by responsibility, not by feature trees.
 
-```
+<details>
+<summary><b>Show the package tree</b></summary>
+
+```text
 packages/
 ├── axiomsec/          terminal app, agent runtime, tools, server, CLI
 │   └── src/
@@ -269,12 +273,15 @@ packages/
 └── script/             @axiomsec/script — internal build helpers
 ```
 
+</details>
+
 ## Development
 
 ```bash
 bun install
 bun typecheck                 # turbo runs tsgo --noEmit across all packages
 bun run lint                  # oxlint at the repo root
+bun test                      # tracked suite in packages/axiomsec/test
 bun --cwd packages/axiomsec run dev
 bun --cwd packages/axiomsec run build
 ```
@@ -291,6 +298,8 @@ Refresh the bundled provider/model snapshot:
 ```bash
 bun --cwd packages/axiomsec run script/generate.ts
 ```
+
+Architecture, invariants and the test layering are documented in [`docs/agents/ARCHITECTURE.md`](docs/agents/ARCHITECTURE.md) and its sibling guides.
 
 ## Plugins and SDK
 
